@@ -47,7 +47,10 @@ def make_inside_sphere(lat_steps=64, lon_steps=128, radius=10.0, fov_deg=360.0):
     )
 
 def make_quad():
-    # Full screen quad 0..1 UV
+    # Full screen quad with flipped U to match sphere's inside-out winding
+    # Sphere uses (1-u), so we must also run 1..0 left-to-right to match.
+    # V is also flipped relative to Sphere (0 at top here vs 1 at top on sphere), 
+    # but let's stick to fixing horizontal mirror first unless upside-down.
     # Positions x,y in [-1, 1]
     verts = np.array([
         -1.0, -1.0, 0.0,
@@ -55,12 +58,14 @@ def make_quad():
          1.0,  1.0, 0.0,
         -1.0,  1.0, 0.0
     ], dtype=np.float32)
-    # Standard UVs
+    
+    # UVs: BL, BR, TR, TL
+    # Flip U: 1 at Left, 0 at Right.
     uvs = np.array([
-        0.0, 1.0, 
-        1.0, 1.0,
+        0.0, 0.0, 
         1.0, 0.0,
-        0.0, 0.0
+        1.0, 1.0,
+        0.0, 1.0
     ], dtype=np.float32)
     idx = np.array([0, 1, 2, 0, 2, 3], dtype=np.uint32)
     return verts, uvs, idx

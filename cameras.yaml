@@ -5,8 +5,8 @@ cameras:
   - 640
   - 480
   type: front
-  fov: 30.0
-  yaw: 0.0
+  fov: 40.0
+  yaw: 40.0
   pitch: 0.0
   roll: 0.0
   orientation: 0.0
@@ -16,8 +16,8 @@ cameras:
   - 640
   - 480
   type: front
-  fov: 30.0
-  yaw: 0.0
+  fov: 50.0
+  yaw: -40.0
   pitch: 0.0
   roll: 0.0
   orientation: -270.0

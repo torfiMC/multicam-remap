@@ -31,10 +31,46 @@ def query_dshow_options_ffmpeg(device_index: int):
         print(f"[video] Error querying dshow options: {e}")
 
 
+def get_libcamera_name_by_index(index: int):
+    # Try different commands
+    cmds = ["rpicam-hello", "libcamera-hello"]
+    for cmd in cmds:
+        try:
+             res = subprocess.run([cmd, "--list-cameras"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+             if res.returncode == 0:
+                 lines = res.stdout.splitlines()
+                 # Format check: 0 : imx219 ... (/base/...)
+                 valid_lines = [l for l in lines if l.strip() and l.strip()[0].isdigit() and ":" in l]
+                 if 0 <= index < len(valid_lines):
+                     line = valid_lines[index]
+                     if "(" in line and ")" in line:
+                         return line.split("(")[1].split(")")[0]
+        except FileNotFoundError:
+            continue
+    return None
+
+def make_libcamera_pipeline(width, height, fps=30, camera_name=None):
+    cam_prop = ""
+    if camera_name:
+        cam_prop = f"camera-name={camera_name}"
+
+    w_str = f"width={width}" if width else ""
+    h_str = f"height={height}" if height else ""
+    fps_str = f"framerate={fps}/1"
+    
+    caps_list = [x for x in [w_str, h_str, fps_str] if x]
+    caps = ", ".join(caps_list)
+    
+    # libcamerasrc -> videoconvert -> appsink (BGR)
+    pipeline = f"libcamerasrc {cam_prop} ! video/x-raw, {caps} ! videoconvert ! video/x-raw, format=BGR ! appsink drop=1"
+    return pipeline
+
+
 def open_video_source(src: str, width: int = None, height: int = None):
     # src:
-    #   "0"            default camera
+    #   "0", "1"       default camera
     #   "dshow:0"      DirectShow
+    #   "libcamera:0"  RPi libcamera via GStreamer
     #   "path\to\file"
     if src.startswith("dshow:"):
         idx = int(src.split(":", 1)[1])
@@ -54,6 +90,17 @@ def open_video_source(src: str, width: int = None, height: int = None):
             cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
             
         is_device = True
+    elif src.startswith("libcamera:"):
+        print("[video] Initializing libcamera (GStreamer)...")
+        idx = int(src.split(":", 1)[1])
+        cam_name = get_libcamera_name_by_index(idx)
+        print(f"[video] Resolved libcamera index {idx} to name: {cam_name}")
+        
+        pipeline = make_libcamera_pipeline(width, height, 30, cam_name)
+        print(f"[video] GStreamer Pipeline: {pipeline}")
+        
+        cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+        is_device = False # No need for MJPG forcing on GStreamer
     else:
         try:
             # Check for v4l2 prefix or simple index

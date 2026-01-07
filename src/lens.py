@@ -3,6 +3,7 @@ import numpy as np
 from OpenGL import GL
 from src.capture import CameraDevice
 from src.lookup import generate_lookup_float
+from src.constants import LOOKUP_WIDTH, LOOKUP_HEIGHT, PROJECTION_FOV_DEG, DEFAULT_FOV
 
 class LensView:
     """Represents a single optical lens projecting onto the sphere"""
@@ -10,7 +11,7 @@ class LensView:
         self.camera = camera
         
         # Config extraction
-        self.fov = float(cam_config.get("fov", 160.0))
+        self.fov = float(cam_config.get("fov", DEFAULT_FOV))
         cam_type = cam_config.get("type", "single")
         
         # Determine UV mapping settings based on type
@@ -34,9 +35,9 @@ class LensView:
         self.orientation = float(cam_config.get("orientation", 0.0))
         
         # Generate Lookup
-        self.out_w = 1024
-        self.out_h = 512
-        PROJ_FOV = 180.0
+        self.out_w = LOOKUP_WIDTH
+        self.out_h = LOOKUP_HEIGHT
+        PROJ_FOV = PROJECTION_FOV_DEG
         
         # Calculate source slice dims for lookup gen
         lens_pixel_w = camera.actual_w // pixel_w_divisor
