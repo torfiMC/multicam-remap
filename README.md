@@ -4,9 +4,9 @@ A high-performance Python OpenGL viewer for fusing multiple camera streams into 
 
 ## Written by Torfi Frans Olafsson
 
-I have a background in games graphics programming am an FPV drone hobbyist. Recently I have been putting multiple cameras on my drones using hardware switches to flip between them. However, I have wanted to be able to see the feed from many of them at the same time, but in a way that isn't confusing. So I thought it could be cool to take their feed and fuse it like many VR and 360 cameras do, building a full spherical vision field around a virtual camera and output that to the video transmitter. This does introduce latency and is not suited for agressive acrobatic flight, but for slower platforms, it can work.
+I have a background in games graphics programming and am an FPV drone hobbyist. Recently I have been putting multiple cameras on my drones using hardware switches to flip between them. However, I have wanted to be able to see the feed from many of them at the same time, but in a way that isn't confusing. So, I thought it could be cool to take their feed and fuse it like many VR and 360 cameras do, building a full spherical vision field around a virtual camera and output that to the video transmitter. This does introduce latency and is not suited for aggressive acrobatic flight, but for slower platforms, it can work.
 
-Transforming lens data using OpenCV and the CPU is very slow, but graphics hardware is perfect for it. So I thought about pre-computing the lens distortion correction into a lookup table for every pixel, which could be run on a fragment shader. The computation results in a texture that is never show, but contains two 16 bit channels, which represent the remapped U and V coordinates for each pixel. 
+Transforming lens data using OpenCV and the CPU is very slow, but graphics hardware is perfect for it. I decided to pre-compute the lens distortion correction into a lookup table for every pixel, which could be run on a fragment shader. The computation results in a texture that is never shown, but contains two 16-bit channels, which represent the remapped U and V coordinates for each pixel.
 
 ## Purpose
 
