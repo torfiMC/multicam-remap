@@ -6,6 +6,7 @@ import time
 import ctypes
 import argparse
 import subprocess
+import threading
 import re
 import yaml
 
@@ -614,24 +615,50 @@ class CameraDevice:
         
         self.last_frame = frame
         self.new_frame_ready = True
+        
+        # Threading for capture
+        self.running = True
+        self.lock = threading.Lock()
+        self.thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self.thread.start()
+
+    def _capture_loop(self):
+        while self.running:
+            if not self.cap.isOpened():
+                break
+                
+            ret, frame = self.cap.read()
+            if ret:
+                with self.lock:
+                    self.last_frame = frame
+                    self.new_frame_ready = True
+            else:
+                 # Check if it's a file that needs looping
+                 if not self.id_str.startswith("dshow") and not self.id_str.isdigit():
+                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                 else:
+                     time.sleep(0.01)
 
     def update(self):
-        ret, frame = self.cap.read()
-        if ret:
-            self.last_frame = frame
-            self.new_frame_ready = True
-        else:
-             # Loop file sources
-             if not self.id_str.startswith("dshow") and not self.id_str.isdigit():
-                 self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        # Update is now handled by the thread.
+        pass
+
+    def stop(self):
+        self.running = False
+        if self.thread.is_alive():
+            self.thread.join(timeout=1.0)
+        self.cap.release()
+
 
     def upload_texture(self):
         if self.new_frame_ready:
             GL.glActiveTexture(GL.GL_TEXTURE0)
             GL.glBindTexture(GL.GL_TEXTURE_2D, self.tex_id)
-            # BGR to RGB
-            rgb = cv2.cvtColor(self.last_frame, cv2.COLOR_BGR2RGB)
-            GL.glTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0, self.actual_w, self.actual_h, GL.GL_RGB, GL.GL_UNSIGNED_BYTE, rgb)
+            
+            # Optimization: Upload BGR directly and let the driver/GPU handle swizzle (or store as is)
+            GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT, 1)
+            GL.glTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0, self.actual_w, self.actual_h, GL.GL_BGR, GL.GL_UNSIGNED_BYTE, self.last_frame)
+            
             self.new_frame_ready = False
 
 
