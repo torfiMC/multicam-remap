@@ -4,3 +4,4 @@ PyOpenGL
 PyOpenGL_accelerate 
 glfw
 pillow
+PyYAML

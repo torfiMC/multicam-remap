@@ -1,0 +1,45 @@
+cameras:
+- id: dshow:0
+  name: Front Lens
+  resolution:
+  - 640
+  - 480
+  type: front
+  fov: 30.0
+  yaw: 0.0
+  pitch: 0.0
+  roll: 0.0
+  orientation: 0.0
+- id: dshow:1
+  name: other cam
+  resolution:
+  - 640
+  - 480
+  type: front
+  fov: 30.0
+  yaw: 0.0
+  pitch: 0.0
+  roll: 0.0
+  orientation: -270.0
+- id: dshow:2
+  name: Front Lens
+  resolution:
+  - 2560
+  - 720
+  type: dual_left
+  fov: 160.0
+  yaw: 0.0
+  pitch: 0.0
+  roll: 0.0
+  orientation: 0.0
+- id: dshow:2
+  name: Back Lens
+  resolution:
+  - 2560
+  - 720
+  type: dual_right
+  fov: 160.0
+  yaw: 0.0
+  pitch: 90.0
+  roll: 0.0
+  orientation: 0.0
