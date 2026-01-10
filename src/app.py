@@ -10,7 +10,7 @@ from OpenGL import GL
 from src.capture import CameraDevice
 from src.lens import LensView
 from src.geometry import make_inside_sphere, make_quad
-from src.shaders import compile_shader, link_program, VERT_SRC, FRAG_SRC_FLOAT
+from src.shaders import compile_shader, link_program, VERT_SRC, FRAG_SRC_FLOAT, FRAG_SRC_FLOAT_SOFTBORDER
 from src.math_utils import mat4_perspective, mat4_from_yaw_pitch_roll
 from src.constants import WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE
 from src.input_handler import InputHandler
@@ -52,12 +52,33 @@ class App:
             'roll': 0.0,
             'fov': 70.0,
         }
+        self.softborder = False
+        self.cache_lookup = True
+        self.maskblur = 0
         try:
             base_dir = os.path.dirname(os.path.abspath(self.config_path))
             viewer_path = os.path.join(base_dir, 'config.yaml')
             if os.path.exists(viewer_path):
                 with open(viewer_path, 'r') as f:
                     viewer_data = yaml.safe_load(f) or {}
+
+                cl = viewer_data.get('cache_lookup', True)
+                if isinstance(cl, str):
+                    self.cache_lookup = cl.strip().lower() in ('1', 'true', 'yes', 'on')
+                else:
+                    self.cache_lookup = bool(cl)
+
+                mb = viewer_data.get('maskblur', 0)
+                try:
+                    self.maskblur = max(0, int(mb))
+                except Exception:
+                    self.maskblur = 0
+
+                sb = viewer_data.get('softborder', False)
+                if isinstance(sb, str):
+                    self.softborder = sb.strip().lower() in ('1', 'true', 'yes', 'on')
+                else:
+                    self.softborder = bool(sb)
                 view = viewer_data.get('view', viewer_data) or {}
                 for k in ('yaw', 'pitch', 'roll', 'fov'):
                     if k in view:
@@ -119,7 +140,13 @@ class App:
 
             # Create lens mapping for this camera config
             try:
-                lens = LensView(dev, cc)
+                lens = LensView(
+                    dev,
+                    cc,
+                    softborder=self.softborder,
+                    cache_lookup=self.cache_lookup,
+                    maskblur=self.maskblur,
+                )
             except Exception as e:
                 print(f"[warn] Failed to initialize lens for '{cam_name}' ({dev_id}): {type(e).__name__}: {e}")
                 continue
@@ -166,7 +193,8 @@ class App:
 
         # Shader
         vs = compile_shader(VERT_SRC, GL.GL_VERTEX_SHADER)
-        fs = compile_shader(FRAG_SRC_FLOAT, GL.GL_FRAGMENT_SHADER)
+        fs_src = FRAG_SRC_FLOAT_SOFTBORDER if getattr(self, 'softborder', False) else FRAG_SRC_FLOAT
+        fs = compile_shader(fs_src, GL.GL_FRAGMENT_SHADER)
         self.prog = link_program(vs, fs)
 
         # Uniform locs
@@ -180,8 +208,17 @@ class App:
             'u_uv_scale_x': GL.glGetUniformLocation(self.prog, "u_uv_scale_x"),
         }
 
+        if getattr(self, 'softborder', False):
+            self.u_locs['u_mask'] = GL.glGetUniformLocation(self.prog, "u_mask")
+
         GL.glDisable(GL.GL_CULL_FACE)
         GL.glDisable(GL.GL_DEPTH_TEST)
+
+        if getattr(self, 'softborder', False):
+            GL.glEnable(GL.GL_BLEND)
+            GL.glBlendFunc(GL.GL_SRC_ALPHA, GL.GL_ONE_MINUS_SRC_ALPHA)
+        else:
+            GL.glDisable(GL.GL_BLEND)
 
     def _init_state(self):
         vc = getattr(self, 'viewer_config', None) or {}
@@ -236,6 +273,8 @@ class App:
             GL.glUseProgram(self.prog)
             GL.glUniform1i(self.u_locs['u_src'], 0)
             GL.glUniform1i(self.u_locs['u_lookup'], 1)
+            if getattr(self, 'softborder', False):
+                GL.glUniform1i(self.u_locs['u_mask'], 2)
 
             # Render in reverse order (Painter's Algorithm)
             for lens in reversed(self.lenses): 
@@ -253,6 +292,10 @@ class App:
                  
                  GL.glActiveTexture(GL.GL_TEXTURE1)
                  GL.glBindTexture(GL.GL_TEXTURE_2D, lens.tex_lookup)
+
+                 if getattr(self, 'softborder', False):
+                     GL.glActiveTexture(GL.GL_TEXTURE2)
+                     GL.glBindTexture(GL.GL_TEXTURE_2D, getattr(lens, 'tex_mask', 0))
 
                  GL.glDrawElements(GL.GL_TRIANGLES, len(self.indices), GL.GL_UNSIGNED_INT, None)
 
@@ -274,6 +317,8 @@ class App:
             GL.glUseProgram(self.prog)
             GL.glUniform1i(self.u_locs['u_src'], 0)
             GL.glUniform1i(self.u_locs['u_lookup'], 1)
+            if getattr(self, 'softborder', False):
+                GL.glUniform1i(self.u_locs['u_mask'], 2)
             GL.glUniformMatrix4fv(self.u_locs['u_mvp'], 1, GL.GL_TRUE, mvp)
 
             # Render in reverse order. Note: This overlays multiple cameras on 0..1 UV.
@@ -288,6 +333,10 @@ class App:
                  
                  GL.glActiveTexture(GL.GL_TEXTURE1)
                  GL.glBindTexture(GL.GL_TEXTURE_2D, lens.tex_lookup)
+
+                 if getattr(self, 'softborder', False):
+                     GL.glActiveTexture(GL.GL_TEXTURE2)
+                     GL.glBindTexture(GL.GL_TEXTURE_2D, getattr(lens, 'tex_mask', 0))
 
                  GL.glDrawElements(GL.GL_TRIANGLES, len(self.q_indices), GL.GL_UNSIGNED_INT, None)
 

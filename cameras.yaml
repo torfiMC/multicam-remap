@@ -1,6 +1,6 @@
 cameras:
 - id: dshow:0
-  name: Front Lens
+  name: Webcam
   resolution:
   - 640
   - 480
@@ -11,20 +11,8 @@ cameras:
   roll: 0.0
   orientation: 0.0
   mask_mindistance: 0.9
-- id: dshow:1
-  name: other cam
-  resolution:
-  - 640
-  - 480
-  type: front
-  fov: 50.0
-  yaw: -40.0
-  pitch: 0.0
-  roll: 0.0
-  orientation: -270.0
-  mask_mindistance: 0.9
 - id: dshow:2
-  name: Front Lens
+  name: Frontlens
   resolution:
   - 2560
   - 720
@@ -36,7 +24,7 @@ cameras:
   orientation: 0.0
   mask_mindistance: 0.9
 - id: dshow:2
-  name: Back Lens
+  name: Backlens
   resolution:
   - 2560
   - 720

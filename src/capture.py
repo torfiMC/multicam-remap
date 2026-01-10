@@ -5,21 +5,21 @@ import time
 import numpy as np
 from OpenGL import GL
 
-def query_dshow_options_ffmpeg(device_index: int):
+def query_dshow_options_ffmpeg(device_name: str):
     """
-    Uses ffmpeg to list DirectShow device options for the given index.
+    Uses ffmpeg to list DirectShow device options for the given device name.
     Outputs to console.
     """
-    print(f"[video] Querying capabilities for dshow index {device_index} via ffmpeg...")
+    if not device_name:
+        print("[video] No DirectShow device name provided; skipping ffmpeg capability query.")
+        return
+
+    print(f"[video] Querying capabilities for dshow device '{device_name}' via ffmpeg...")
     try:
-        # HARDCODED override for debugging as per user request
-        dev_name = "USB Camera"
-        print(f"[video] Using hardcoded device name: '{dev_name}'")
-        
-        cmd_opt_str = f'ffmpeg -list_options true -f dshow -i video="{dev_name}"'
+        cmd_opt_str = f'ffmpeg -list_options true -f dshow -i video="{device_name}"'
         res_opt = subprocess.run(cmd_opt_str, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace', shell=True)
         
-        print(f"[video] Supported formats for '{dev_name}':")
+        print(f"[video] Supported formats for '{device_name}':")
         for line in res_opt.stderr.splitlines():
             if "pixel_format" in line or "vcodec" in line or "fps" in line:
                  txt = line.split("]", 1)[-1].strip() if "]" in line else line.strip()
@@ -66,7 +66,13 @@ def make_libcamera_pipeline(width, height, fps=30, camera_name=None):
     return pipeline
 
 
-def open_video_source(src: str, width: int = None, height: int = None):
+def open_video_source(
+    src: str,
+    width: int = None,
+    height: int = None,
+    dshow_query_options: bool = False,
+    dshow_device_name: str = None,
+):
     # src:
     #   "0", "1"       default camera
     #   "dshow:0"      DirectShow
@@ -74,9 +80,11 @@ def open_video_source(src: str, width: int = None, height: int = None):
     #   "path\to\file"
     if src.startswith("dshow:"):
         idx = int(src.split(":", 1)[1])
-        
-        # Query options BEFORE opening, to avoid busy device issues
-        query_dshow_options_ffmpeg(idx)
+
+        # Optional debug: query options BEFORE opening.
+        # This can be slow and requires a DirectShow device name for ffmpeg.
+        if dshow_query_options:
+            query_dshow_options_ffmpeg(dshow_device_name)
         
         if width is not None and height is not None:
             print(f"[video] Opening DSHOW device {idx} with explicit params in constructor...")
@@ -162,9 +170,18 @@ class CameraDevice:
         self.width, self.height = self.res[0], self.res[1]
         self.is_dual = (config_dict.get("type", "single") == "dual")
         self.format = config_dict.get("format", "MJPG")
+
+        self.dshow_query_options = bool(config_dict.get("dshow_query_options", False))
+        self.dshow_device_name = config_dict.get("dshow_device_name")
         
         # Initialize Source
-        self.cap = open_video_source(self.id_str, self.width, self.height)
+        self.cap = open_video_source(
+            self.id_str,
+            self.width,
+            self.height,
+            dshow_query_options=self.dshow_query_options,
+            dshow_device_name=self.dshow_device_name,
+        )
         
         # Verify resolution, read one frame
         ret, frame = self.cap.read()
