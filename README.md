@@ -67,6 +67,18 @@ You will need `opencv-python`, `numpy`, `glfw`, `PyOpenGL`, `pyyaml`, and `pillo
 ### 2. Configuration (`cameras.yaml`)
 Create or edit `cameras.yaml` to define your camera setup. The application supports multiple cameras, including single fisheye lenses or dual-lens setups.
 
+### 2b. Viewer Startup Config (`config.yaml`)
+Optionally create `config.yaml` (next to `cameras.yaml`) to set the initial virtual camera orientation and FOV.
+
+Example `config.yaml`:
+```yaml
+view:
+    yaw: 0.0
+    pitch: 0.0
+    roll: 0.0
+    fov: 70.0
+```
+
 **Example `cameras.yaml`:**
 ```yaml
 cameras:
@@ -77,6 +89,7 @@ cameras:
       - 720
     type: single         # 'single', 'dual_left', or 'dual_right'
     fov: 160.0           # Lens Field of View in degrees
+    mask_mindistance: 0.5  # 0=center ramp, 1=edge-only ramp (optional)
     yaw: 0.0             # World Yaw (horizontal rotation)
     pitch: 0.0           # World Pitch (vertical rotation)
     roll: 0.0            # World Roll
@@ -96,6 +109,7 @@ cameras:
     - `dual_left`: Takes the left 50% of the frame (common for dual-lens cameras).
     - `dual_right`: Takes the right 50% of the frame.
 - `fov`: The field of view of the lens itself.
+- `mask_mindistance`: Optional edge-mask ramp control for the lookup (0=center-to-edge ramp, 1=edge-only ramp).
 - `yaw`/`pitch`/`roll`: Position of the camera in the virtual world.
 - `orientation`: Rotation of the sensor image itself (0, 90, 180, 270).
 

@@ -45,6 +45,26 @@ class App:
         if not self.cam_configs:
              raise RuntimeError("No cameras defined in config file.")
 
+        # Optional viewer/virtual camera config (separate file)
+        self.viewer_config = {
+            'yaw': 0.0,
+            'pitch': 0.0,
+            'roll': 0.0,
+            'fov': 70.0,
+        }
+        try:
+            base_dir = os.path.dirname(os.path.abspath(self.config_path))
+            viewer_path = os.path.join(base_dir, 'config.yaml')
+            if os.path.exists(viewer_path):
+                with open(viewer_path, 'r') as f:
+                    viewer_data = yaml.safe_load(f) or {}
+                view = viewer_data.get('view', viewer_data) or {}
+                for k in ('yaw', 'pitch', 'roll', 'fov'):
+                    if k in view:
+                        self.viewer_config[k] = float(view[k])
+        except Exception as e:
+            print(f"[warn] Failed to load viewer config.yaml: {e}")
+
     def _init_window(self):
         if not glfw.init():
             raise RuntimeError("glfw.init() failed")
@@ -70,27 +90,46 @@ class App:
         self.device_registry = {} # id_str -> CameraDevice
         self.devices = [] # Unique list of devices to update
         self.lenses = []
+        self.lens_configs = []  # aligns with self.lenses
+        self.lens_config_indices = []  # index into self.cam_configs for each lens
+        failed_dev_ids = set()
         
-        try:
-            for cc in self.cam_configs:
-                dev_id = str(cc.get("id", "0"))
-                
-                # Retrieve or Create Device
-                if dev_id in self.device_registry:
-                    dev = self.device_registry[dev_id]
-                    print(f"Reusing existing device {dev_id} for '{cc.get('name')}'")
-                else:
-                    print(f"Initializing new device {dev_id} for '{cc.get('name')}'")
-                    dev = CameraDevice(cc)
-                    self.device_registry[dev_id] = dev
-                    self.devices.append(dev)
-                
-                # Create Lens
-                self.lenses.append(LensView(dev, cc))
+        for i, cc in enumerate(self.cam_configs):
+            dev_id = str(cc.get("id", "0"))
+            cam_name = cc.get('name', dev_id)
 
-        except Exception as e:
-            glfw.terminate()
-            raise e
+            if dev_id in failed_dev_ids:
+                print(f"[warn] Skipping camera '{cam_name}' ({dev_id}) (previously failed to open)")
+                continue
+
+            # Retrieve or create device
+            if dev_id in self.device_registry:
+                dev = self.device_registry[dev_id]
+                print(f"Reusing existing device {dev_id} for '{cam_name}'")
+            else:
+                try:
+                    print(f"Initializing new device {dev_id} for '{cam_name}'")
+                    dev = CameraDevice(cc)
+                except Exception as e:
+                    print(f"[warn] Failed to open device for '{cam_name}' ({dev_id}): {type(e).__name__}: {e}")
+                    failed_dev_ids.add(dev_id)
+                    continue
+                self.device_registry[dev_id] = dev
+                self.devices.append(dev)
+
+            # Create lens mapping for this camera config
+            try:
+                lens = LensView(dev, cc)
+            except Exception as e:
+                print(f"[warn] Failed to initialize lens for '{cam_name}' ({dev_id}): {type(e).__name__}: {e}")
+                continue
+
+            self.lenses.append(lens)
+            self.lens_configs.append(cc)
+            self.lens_config_indices.append(i)
+
+        if not self.lenses:
+            print("[warn] No cameras could be initialized; running with an empty scene.")
 
     def _init_gl(self):
         PROJ_FOV = 180.0
@@ -145,10 +184,11 @@ class App:
         GL.glDisable(GL.GL_DEPTH_TEST)
 
     def _init_state(self):
-        self.yaw = 0.0
-        self.pitch = 0.0
-        self.roll = 0.0
-        self.fov = 70.0
+        vc = getattr(self, 'viewer_config', None) or {}
+        self.yaw = float(vc.get('yaw', 0.0))
+        self.pitch = float(vc.get('pitch', 0.0))
+        self.roll = float(vc.get('roll', 0.0))
+        self.fov = float(vc.get('fov', 70.0))
         self.view_sphere = True
         
         self.edit_mode = False
@@ -257,8 +297,13 @@ class App:
     def save_config(self):
         print(f"[edit] Saving configuration to {self.config_path}...")
         try:
-            for i, lens in enumerate(self.lenses):
-                cfg = self.cam_configs[i]
+            indices = getattr(self, 'lens_config_indices', None)
+            if not indices:
+                indices = list(range(len(self.lenses)))
+
+            for lens_idx, lens in enumerate(self.lenses):
+                cfg_idx = indices[lens_idx]
+                cfg = self.cam_configs[cfg_idx]
                 cfg['yaw'] = float(lens.world_yaw)
                 cfg['pitch'] = float(lens.world_pitch)
                 cfg['roll'] = float(lens.world_roll)

@@ -16,12 +16,18 @@ class InputHandler:
         
         # Edit Toggle
         if key == glfw.KEY_E:
+            if not getattr(self.app, 'lenses', None):
+                print("[edit] No active cameras/lenses to edit.")
+                self.app.edit_mode = False
+                return
+
             self.app.edit_mode = not self.app.edit_mode
             if self.app.edit_mode:
                 print("-" * 40)
                 print("EDIT MODE ENABLED")
                 print("Controls: [E] Exit/Save, [C] Cycle Cam, [A] Cycle Attr, [+ / -] Adjust")
-                cam_name = self.app.cam_configs[self.app.sel_lens_idx].get('name', f'Cam {self.app.sel_lens_idx}')
+                cfgs = getattr(self.app, 'lens_configs', None) or self.app.cam_configs
+                cam_name = cfgs[self.app.sel_lens_idx].get('name', f'Cam {self.app.sel_lens_idx}')
                 print(f"Current Selection: {cam_name} | Attribute: {ATTR_NAMES[self.app.sel_attr_idx]}")
                 print("-" * 40)
             else:
@@ -34,13 +40,17 @@ class InputHandler:
             self._handle_view_keys(key)
 
     def _handle_edit_keys(self, key, mods):
+        if not self.app.lenses:
+            return
+
+        cfgs = getattr(self.app, 'lens_configs', None) or self.app.cam_configs
         lens = self.app.lenses[self.app.sel_lens_idx]
-        cam_name = self.app.cam_configs[self.app.sel_lens_idx].get('name', f'Cam {self.app.sel_lens_idx}')
+        cam_name = cfgs[self.app.sel_lens_idx].get('name', f'Cam {self.app.sel_lens_idx}')
 
         if key == glfw.KEY_C:
             self.app.sel_lens_idx = (self.app.sel_lens_idx + 1) % len(self.app.lenses)
             lens = self.app.lenses[self.app.sel_lens_idx]
-            cam_name = self.app.cam_configs[self.app.sel_lens_idx].get('name', f'Cam {self.app.sel_lens_idx}')
+            cam_name = cfgs[self.app.sel_lens_idx].get('name', f'Cam {self.app.sel_lens_idx}')
             print(f"[edit] Selected Camera: {cam_name}")
             
         elif key == glfw.KEY_A:
