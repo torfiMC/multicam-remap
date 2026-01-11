@@ -1,0 +1,10 @@
+# Viewer / virtual camera startup settings
+# Angles are in degrees.
+softborder: true  # true = alpha blend using edge mask; false = discard-only (faster)
+cache_lookup: false # true = reuse cached lookup/mask files; false = always regenerate
+maskblur: 3 # Gaussian blur kernel size for the mask PNG (0/1 = no blur; 3+ recommended)
+view:
+  yaw: 180.0
+  pitch: 0.0
+  roll: 0.0
+  fov: 120.0

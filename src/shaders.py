@@ -85,6 +85,35 @@ void main() {
 }
 """
 
+FRAG_SRC_FLOAT_SOFTBORDER = r"""
+#version 120
+uniform sampler2D u_src;     // combined source frame (left|right)
+uniform sampler2D u_lookup;  // RG16F float lookup (u in R, v in G)
+uniform sampler2D u_mask;    // L8/LUMINANCE mask, sampled in equirect space
+uniform float u_uv_offset_x; // U offset in source texture (e.g. 0.0 or 0.5)
+uniform float u_uv_scale_x;  // U scale in source texture (e.g. 0.5 or 1.0)
+
+varying vec2 v_uv;
+
+void main() {
+    vec2 lu = texture2D(u_lookup, v_uv).rg;
+
+    // Preserve the existing low-end validity check (sentinel) to avoid sampling
+    // bogus UVs outside the usable area.
+    if (lu.x < -0.0001) {
+        discard;
+    }
+
+    vec2 src_uv = lu;
+    src_uv.x = src_uv.x * u_uv_scale_x + u_uv_offset_x;
+
+    vec3 rgb = texture2D(u_src, src_uv).rgb;
+    float a = texture2D(u_mask, v_uv).r;
+
+    gl_FragColor = vec4(rgb, a);
+}
+"""
+
 def compile_shader(src: str, shader_type):
     sh = GL.glCreateShader(shader_type)
     GL.glShaderSource(sh, src)

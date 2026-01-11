@@ -26,7 +26,9 @@ This application is being built with the aim of running on a Raspberry Pi 5 moun
 - **High-Quality Remapping**: Uses 32-bit floating point UV lookups (RG16F) for smooth linear interpolation and precise unwarping.
 - **Hardware Acceleration**: OpenGL-based rendering pipeline handles the heavy lifting of mapping fisheye textures onto a virtual sphere.
 - **Dual-Lens Support**: Designed for side-by-side dual fisheye streams (e.g., 2560x720 split into two 1280x720 views).
-- **Lookup Caching**: Automatically generates and caches lookup tables as .npy files to speed up startup.
+- **Lookup + Mask Caching**: Caches lookup tables as `.npy` and edge masks as `.png` (controllable via `cache_lookup`). Cache filenames are prefixed with the camera `name`.
+- **Soft Border Blending (Optional)**: When `softborder: true`, a generated edge-distance mask is used as per-fragment alpha to blend lenses smoothly. When `false`, the fast discard-only path is used.
+- **Resilient Startup**: If a camera fails to open, it is reported and skipped instead of crashing the whole app.
 - **Cross-Platform**:
     - **Windows**: Optimized for DirectShow (`cv2.CAP_DSHOW`) to enforce MJPG codec for high-bandwidth USB streaming.
     - **Raspberry Pi 5**: Supports standard V4L2 capture (`cv2.CAP_ANY` or `cv2.CAP_V4L2`), verified with libcamera hardware.
@@ -46,6 +48,11 @@ This application is being built with the aim of running on a Raspberry Pi 5 moun
     -   Calculates a mapping from the output equirectangular pixel coordinates back to the input fisheye coordinates.
     -   **Float Mode**: Creates a high-precision (H, W, 2) RGFloat16 OpenGL texture where channel R is U and G is V. This allows the GPU to linearly interpolate coordinates for the smoothest image.
 
+2b. **Edge Mask Generation (Optional)**:
+    -   Generates an 8-bit grayscale PNG mask aligned to the equirectangular output.
+    -   The mask is computed from the same analytic projection math as the lookup (and supersampled internally) to avoid jagged edges.
+    -   When `softborder: true`, the mask is sampled in the fragment shader as alpha and blended onto the framebuffer.
+
 3.  **Rendering**:
     -   The script creates an "inside-out" sphere mesh.
     -   A specialized Fragment Shader samples the Lookup Texture to find which pixel of the raw camera frame to display.
@@ -62,10 +69,25 @@ pip install -r requirements.txt
 
 You will need `opencv-python`, `numpy`, `glfw`, `PyOpenGL`, `pyyaml`, and `pillow`.
 
-**Windows Note:** To debug camera capabilities, `ffmpeg` is recommended on your system PATH. The application uses it to list supported resolutions and codecs on startup.
+**Windows Note:** `ffmpeg` is optional. The app can use it for DirectShow capability probing only if you explicitly enable it per-camera (see `dshow_query_options`).
 
 ### 2. Configuration (`cameras.yaml`)
 Create or edit `cameras.yaml` to define your camera setup. The application supports multiple cameras, including single fisheye lenses or dual-lens setups.
+
+### 2b. Viewer Startup Config (`config.yaml`)
+Optionally create `config.yaml` (next to `cameras.yaml`) to set the initial virtual camera orientation and FOV.
+
+Example `config.yaml`:
+```yaml
+softborder: false  # true = alpha blend using edge mask; false = discard-only (faster)
+cache_lookup: true # true = reuse cached lookup/mask files; false = always regenerate
+maskblur: 0        # Gaussian blur kernel size for the mask PNG (0/1 = no blur; 3+ recommended)
+view:
+    yaw: 0.0
+    pitch: 0.0
+    roll: 0.0
+    fov: 70.0
+```
 
 **Example `cameras.yaml`:**
 ```yaml
@@ -77,6 +99,10 @@ cameras:
       - 720
     type: single         # 'single', 'dual_left', or 'dual_right'
     fov: 160.0           # Lens Field of View in degrees
+    mask_mindistance: 0.5  # 0=center ramp, 1=edge-only ramp (optional)
+    # Optional Windows DirectShow debugging (slow):
+    # dshow_query_options: true
+    # dshow_device_name: "Exact DirectShow name for ffmpeg"
     yaw: 0.0             # World Yaw (horizontal rotation)
     pitch: 0.0           # World Pitch (vertical rotation)
     roll: 0.0            # World Roll
@@ -96,6 +122,9 @@ cameras:
     - `dual_left`: Takes the left 50% of the frame (common for dual-lens cameras).
     - `dual_right`: Takes the right 50% of the frame.
 - `fov`: The field of view of the lens itself.
+- `mask_mindistance`: Optional edge-mask ramp control for the lookup (0=center-to-edge ramp, 1=edge-only ramp).
+- `dshow_query_options`: (Windows, optional) Run an ffmpeg DirectShow capability probe at startup for this camera.
+- `dshow_device_name`: (Windows, optional) Device name string for ffmpeg when `dshow_query_options` is enabled.
 - `yaw`/`pitch`/`roll`: Position of the camera in the virtual world.
 - `orientation`: Rotation of the sensor image itself (0, 90, 180, 270).
 
@@ -146,6 +175,7 @@ Press **E** to toggle Edit Mode. This allows you to calibrate camera positions i
 -   **Low FPS / YUY2 Codec**: On Windows, use `dshow:N` for the id in `cameras.yaml`. The viewer specifically attempts to force MJPG during initialization for `dshow` targets. If your camera falls back to YUY2 at high resolutions (like 2560x720), USB bandwidth limits will drop framerate to ~5fps.
 -   **DirectShow Device Index**: If `dshow:0` is your webcam, your USB camera might be `dshow:1` or `dshow:2`. Use the `ffmpeg -list_options true -f dshow -i video="...` command or trial-and-error to find the right index.
 -   **Black Screen**: Check if the `fov` in config matches your lens. If the lookup generation assumes a FOV larger than what the lens projects, pixels may be discarded.
+-   **Some cameras missing**: If a device fails to open, the app logs a warning and skips it so the rest can still run.
 
 ## Todo
 

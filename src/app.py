@@ -11,7 +11,7 @@ from OpenGL import GL
 from src.capture import CameraDevice
 from src.lens import LensView
 from src.geometry import make_inside_sphere, make_quad
-from src.shaders import compile_shader, link_program, VERT_SRC, FRAG_SRC_FLOAT
+from src.shaders import compile_shader, link_program, VERT_SRC, FRAG_SRC_FLOAT, FRAG_SRC_FLOAT_SOFTBORDER
 from src.math_utils import mat4_perspective, mat4_from_yaw_pitch_roll
 from src.constants import WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE
 from src.input_handler import InputHandler
@@ -88,6 +88,9 @@ class App:
         self.device_registry = {} # id_str -> CameraDevice
         self.devices = [] # Unique list of devices to update
         self.lenses = []
+        self.lens_configs = []  # aligns with self.lenses
+        self.lens_config_indices = []  # index into self.cam_configs for each lens
+        failed_dev_ids = set()
         
         try:
             for cc in self.cam_configs:
@@ -100,15 +103,32 @@ class App:
                 else:
                     log.info(f"Initializing new device {dev_id} for '{cc.get('name')}'")
                     dev = CameraDevice(cc)
-                    self.device_registry[dev_id] = dev
-                    self.devices.append(dev)
-                
-                # Create Lens
-                self.lenses.append(LensView(dev, cc))
+                except Exception as e:
+                    print(f"[warn] Failed to open device for '{cam_name}' ({dev_id}): {type(e).__name__}: {e}")
+                    failed_dev_ids.add(dev_id)
+                    continue
+                self.device_registry[dev_id] = dev
+                self.devices.append(dev)
 
-        except Exception as e:
-            glfw.terminate()
-            raise e
+            # Create lens mapping for this camera config
+            try:
+                lens = LensView(
+                    dev,
+                    cc,
+                    softborder=self.softborder,
+                    cache_lookup=self.cache_lookup,
+                    maskblur=self.maskblur,
+                )
+            except Exception as e:
+                print(f"[warn] Failed to initialize lens for '{cam_name}' ({dev_id}): {type(e).__name__}: {e}")
+                continue
+
+            self.lenses.append(lens)
+            self.lens_configs.append(cc)
+            self.lens_config_indices.append(i)
+
+        if not self.lenses:
+            print("[warn] No cameras could be initialized; running with an empty scene.")
 
     def _init_gl(self):
         PROJ_FOV = 180.0
@@ -145,7 +165,8 @@ class App:
 
         # Shader
         vs = compile_shader(VERT_SRC, GL.GL_VERTEX_SHADER)
-        fs = compile_shader(FRAG_SRC_FLOAT, GL.GL_FRAGMENT_SHADER)
+        fs_src = FRAG_SRC_FLOAT_SOFTBORDER if getattr(self, 'softborder', False) else FRAG_SRC_FLOAT
+        fs = compile_shader(fs_src, GL.GL_FRAGMENT_SHADER)
         self.prog = link_program(vs, fs)
 
         # Uniform locs
@@ -159,14 +180,24 @@ class App:
             'u_uv_scale_x': GL.glGetUniformLocation(self.prog, "u_uv_scale_x"),
         }
 
+        if getattr(self, 'softborder', False):
+            self.u_locs['u_mask'] = GL.glGetUniformLocation(self.prog, "u_mask")
+
         GL.glDisable(GL.GL_CULL_FACE)
         GL.glDisable(GL.GL_DEPTH_TEST)
 
+        if getattr(self, 'softborder', False):
+            GL.glEnable(GL.GL_BLEND)
+            GL.glBlendFunc(GL.GL_SRC_ALPHA, GL.GL_ONE_MINUS_SRC_ALPHA)
+        else:
+            GL.glDisable(GL.GL_BLEND)
+
     def _init_state(self):
-        self.yaw = 0.0
-        self.pitch = 0.0
-        self.roll = 0.0
-        self.fov = 70.0
+        vc = getattr(self, 'viewer_config', None) or {}
+        self.yaw = float(vc.get('yaw', 0.0))
+        self.pitch = float(vc.get('pitch', 0.0))
+        self.roll = float(vc.get('roll', 0.0))
+        self.fov = float(vc.get('fov', 70.0))
         self.view_sphere = True
         
         self.edit_mode = False
@@ -214,6 +245,8 @@ class App:
             GL.glUseProgram(self.prog)
             GL.glUniform1i(self.u_locs['u_src'], 0)
             GL.glUniform1i(self.u_locs['u_lookup'], 1)
+            if getattr(self, 'softborder', False):
+                GL.glUniform1i(self.u_locs['u_mask'], 2)
 
             # Render in reverse order (Painter's Algorithm)
             for lens in reversed(self.lenses): 
@@ -231,6 +264,10 @@ class App:
                  
                  GL.glActiveTexture(GL.GL_TEXTURE1)
                  GL.glBindTexture(GL.GL_TEXTURE_2D, lens.tex_lookup)
+
+                 if getattr(self, 'softborder', False):
+                     GL.glActiveTexture(GL.GL_TEXTURE2)
+                     GL.glBindTexture(GL.GL_TEXTURE_2D, getattr(lens, 'tex_mask', 0))
 
                  GL.glDrawElements(GL.GL_TRIANGLES, len(self.indices), GL.GL_UNSIGNED_INT, None)
 
@@ -252,6 +289,8 @@ class App:
             GL.glUseProgram(self.prog)
             GL.glUniform1i(self.u_locs['u_src'], 0)
             GL.glUniform1i(self.u_locs['u_lookup'], 1)
+            if getattr(self, 'softborder', False):
+                GL.glUniform1i(self.u_locs['u_mask'], 2)
             GL.glUniformMatrix4fv(self.u_locs['u_mvp'], 1, GL.GL_TRUE, mvp)
 
             # Render in reverse order. Note: This overlays multiple cameras on 0..1 UV.
@@ -267,6 +306,10 @@ class App:
                  GL.glActiveTexture(GL.GL_TEXTURE1)
                  GL.glBindTexture(GL.GL_TEXTURE_2D, lens.tex_lookup)
 
+                 if getattr(self, 'softborder', False):
+                     GL.glActiveTexture(GL.GL_TEXTURE2)
+                     GL.glBindTexture(GL.GL_TEXTURE_2D, getattr(lens, 'tex_mask', 0))
+
                  GL.glDrawElements(GL.GL_TRIANGLES, len(self.q_indices), GL.GL_UNSIGNED_INT, None)
 
 
@@ -275,8 +318,13 @@ class App:
     def save_config(self):
         print(f"[edit] Saving configuration to {self.config_path}...")
         try:
-            for i, lens in enumerate(self.lenses):
-                cfg = self.cam_configs[i]
+            indices = getattr(self, 'lens_config_indices', None)
+            if not indices:
+                indices = list(range(len(self.lenses)))
+
+            for lens_idx, lens in enumerate(self.lenses):
+                cfg_idx = indices[lens_idx]
+                cfg = self.cam_configs[cfg_idx]
                 cfg['yaw'] = float(lens.world_yaw)
                 cfg['pitch'] = float(lens.world_pitch)
                 cfg['roll'] = float(lens.world_roll)
