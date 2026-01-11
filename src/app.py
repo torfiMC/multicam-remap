@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import ctypes
+import logging
 import yaml
 import numpy as np
 import glfw
@@ -14,6 +15,8 @@ from src.shaders import compile_shader, link_program, VERT_SRC, FRAG_SRC_FLOAT, 
 from src.math_utils import mat4_perspective, mat4_from_yaw_pitch_roll
 from src.constants import WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE
 from src.input_handler import InputHandler
+
+log = logging.getLogger(__name__)
 
 class App:
     def __init__(self, config_path: str, fullscreen: bool = False):
@@ -41,50 +44,24 @@ class App:
         with open(self.config_path, 'r') as f:
             self.config_data = yaml.safe_load(f)
         
-        self.cam_configs = self.config_data.get('cameras', [])
-        if not self.cam_configs:
+        raw_cams = self.config_data.get('cameras', [])
+        if not raw_cams:
              raise RuntimeError("No cameras defined in config file.")
 
-        # Optional viewer/virtual camera config (separate file)
-        self.viewer_config = {
-            'yaw': 0.0,
-            'pitch': 0.0,
-            'roll': 0.0,
-            'fov': 70.0,
-        }
-        self.softborder = False
-        self.cache_lookup = True
-        self.maskblur = 0
-        try:
-            base_dir = os.path.dirname(os.path.abspath(self.config_path))
-            viewer_path = os.path.join(base_dir, 'config.yaml')
-            if os.path.exists(viewer_path):
-                with open(viewer_path, 'r') as f:
-                    viewer_data = yaml.safe_load(f) or {}
+        self.cam_configs = []
+        for cc in raw_cams:
+            enabled = cc.get("enabled", True)
+            if not enabled:
+                log.info(f"[config] Skipping disabled camera id={cc.get('id')} name={cc.get('name')}")
+                continue
+            self.cam_configs.append(cc)
 
-                cl = viewer_data.get('cache_lookup', True)
-                if isinstance(cl, str):
-                    self.cache_lookup = cl.strip().lower() in ('1', 'true', 'yes', 'on')
-                else:
-                    self.cache_lookup = bool(cl)
+        if not self.cam_configs:
+            raise RuntimeError("All cameras are disabled in config file.")
 
-                mb = viewer_data.get('maskblur', 0)
-                try:
-                    self.maskblur = max(0, int(mb))
-                except Exception:
-                    self.maskblur = 0
-
-                sb = viewer_data.get('softborder', False)
-                if isinstance(sb, str):
-                    self.softborder = sb.strip().lower() in ('1', 'true', 'yes', 'on')
-                else:
-                    self.softborder = bool(sb)
-                view = viewer_data.get('view', viewer_data) or {}
-                for k in ('yaw', 'pitch', 'roll', 'fov'):
-                    if k in view:
-                        self.viewer_config[k] = float(view[k])
-        except Exception as e:
-            print(f"[warn] Failed to load viewer config.yaml: {e}")
+        log.info(f"[config] Active cameras: {len(self.cam_configs)}")
+        for cc in self.cam_configs:
+            log.info(f"[config] cam id={cc.get('id')} name={cc.get('name')} type={cc.get('type')} res={cc.get('resolution')} fmt={cc.get('format')} fps={cc.get('fps', 0)}")
 
     def _init_window(self):
         if not glfw.init():
@@ -115,21 +92,16 @@ class App:
         self.lens_config_indices = []  # index into self.cam_configs for each lens
         failed_dev_ids = set()
         
-        for i, cc in enumerate(self.cam_configs):
-            dev_id = str(cc.get("id", "0"))
-            cam_name = cc.get('name', dev_id)
-
-            if dev_id in failed_dev_ids:
-                print(f"[warn] Skipping camera '{cam_name}' ({dev_id}) (previously failed to open)")
-                continue
-
-            # Retrieve or create device
-            if dev_id in self.device_registry:
-                dev = self.device_registry[dev_id]
-                print(f"Reusing existing device {dev_id} for '{cam_name}'")
-            else:
-                try:
-                    print(f"Initializing new device {dev_id} for '{cam_name}'")
+        try:
+            for cc in self.cam_configs:
+                dev_id = str(cc.get("id", "0"))
+                
+                # Retrieve or Create Device
+                if dev_id in self.device_registry:
+                    dev = self.device_registry[dev_id]
+                    log.info(f"Reusing existing device {dev_id} for '{cc.get('name')}'")
+                else:
+                    log.info(f"Initializing new device {dev_id} for '{cc.get('name')}'")
                     dev = CameraDevice(cc)
                 except Exception as e:
                     print(f"[warn] Failed to open device for '{cam_name}' ({dev_id}): {type(e).__name__}: {e}")
