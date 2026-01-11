@@ -1,0 +1,27 @@
+2026-01-10 22:58:04,062 INFO Logging initialized at logs/app-20260110-225804.log
+2026-01-10 22:58:04,065 INFO [config] Skipping disabled camera id=/dev/v4l/by-id/usb-MACROSILICON_USB_Video_20200909-video-index0 name=Back Lens
+2026-01-10 22:58:04,065 INFO [config] Skipping disabled camera id=/dev/v4l/by-id/usb-VNV_USB_Camera-video-index0 name=Front Lens
+2026-01-10 22:58:04,065 INFO [config] Skipping disabled camera id=/dev/v4l/by-id/usb-VNV_USB_Camera-video-index0 name=Back Lens
+2026-01-10 22:58:04,065 INFO [config] Active cameras: 1
+2026-01-10 22:58:04,065 INFO [config] cam id=rpicam-vid:0 name=OV5647 (rpicam) type=single res=[1920, 1280] fmt=auto fps=30
+2026-01-10 22:58:04,163 INFO Initializing new device rpicam-vid:0 for 'OV5647 (rpicam)'
+2026-01-10 22:58:04,163 INFO [video] Opening source rpicam-vid:0 width=1920 height=1280 fmt=None fps=30 fourcc=None
+2026-01-10 22:58:04,163 INFO [video] Using rpicam-vid raw BGR pipe: rpicam-vid --timeout 0 --camera 0 --width 1920 --height 1280 --framerate 30 --codec bgr --libav-format rawvideo --output - --nopreview
+2026-01-10 22:58:04,171 ERROR Unhandled exception
+Traceback (most recent call last):
+  File "/home/torfi/multicam-remap/main.py", line 56, in main
+    app = App(args.config, args.fullscreen)
+  File "/home/torfi/multicam-remap/src/app.py", line 27, in __init__
+    self._init_devices()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "/home/torfi/multicam-remap/src/app.py", line 111, in _init_devices
+    raise e
+  File "/home/torfi/multicam-remap/src/app.py", line 102, in _init_devices
+    dev = CameraDevice(cc)
+  File "/home/torfi/multicam-remap/src/capture.py", line 374, in __init__
+    self.cap = open_video_source(self.id_str, self.width, self.height, self.format, self.fps)
+               ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/torfi/multicam-remap/src/capture.py", line 328, in open_video_source
+    actual_w = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+               ^^^^^^^
+AttributeError: 'FFmpegPipeCapture' object has no attribute 'get'

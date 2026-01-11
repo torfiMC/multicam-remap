@@ -1,0 +1,36 @@
+2026-01-10 22:59:58,302 INFO Logging initialized at logs/app-20260110-225958.log
+2026-01-10 22:59:58,306 INFO [config] Skipping disabled camera id=/dev/v4l/by-id/usb-MACROSILICON_USB_Video_20200909-video-index0 name=Back Lens
+2026-01-10 22:59:58,306 INFO [config] Skipping disabled camera id=/dev/v4l/by-id/usb-VNV_USB_Camera-video-index0 name=Front Lens
+2026-01-10 22:59:58,306 INFO [config] Skipping disabled camera id=/dev/v4l/by-id/usb-VNV_USB_Camera-video-index0 name=Back Lens
+2026-01-10 22:59:58,306 INFO [config] Active cameras: 1
+2026-01-10 22:59:58,306 INFO [config] cam id=rpicam-vid:0 name=OV5647 (rpicam) type=single res=[1920, 1280] fmt=auto fps=30
+2026-01-10 22:59:58,407 INFO Initializing new device rpicam-vid:0 for 'OV5647 (rpicam)'
+2026-01-10 22:59:58,408 INFO [video] Opening source rpicam-vid:0 width=1920 height=1280 fmt=None fps=30 fourcc=None
+2026-01-10 22:59:58,408 INFO [video] Using rpicam-vid raw BGR pipe: rpicam-vid --timeout 0 --camera 0 --width 1920 --height 1280 --framerate 30 --codec bgr --libav-format rawvideo --output - --nopreview
+2026-01-10 22:59:58,408 INFO [video] Device opened id=rpicam-vid:0 fmt=None req_res=1920x1280 fps=30
+2026-01-10 23:00:00,051 WARNING [video] Initial frame read failed for rpicam-vid:0 at 1920x1280 fmt=None. Current props: fourcc=---- fps=30.0 res=1920.0x1280.0
+2026-01-10 23:00:00,051 WARNING [video] Retrying rpicam-vid with yuv420 -> ffmpeg pipeline after BGR pipe read failure
+2026-01-10 23:00:00,051 INFO [video] Opening source rpicam-vid:0 width=1920 height=1280 fmt=None fps=30 fourcc=None
+2026-01-10 23:00:00,051 INFO [video] Using rpicam-vid pipe: rpicam-vid --timeout 0 --camera 0 --width 1920 --height 1280 --framerate 30 --codec yuv420 --libav-format rawvideo --output - --nopreview | ffmpeg -f rawvideo -pix_fmt yuv420p -s 1920x1280 -r 30 -i pipe:0 -f rawvideo -pix_fmt bgr24 pipe:1
+2026-01-10 23:00:00,051 WARNING [video] OpenCV FFMPEG backend failed; using raw pipe reader fallback
+2026-01-10 23:00:00,051 INFO [debug] Requested 1920x1280, got 1920.0x1280.0
+2026-01-10 23:00:00,052 INFO [video] Active FOURCC: 'BGR3' (Int: 861030210)
+2026-01-10 23:00:00,052 INFO [video] Active FPS: 30.0
+2026-01-10 23:00:00,838 INFO [video] Retrying open of rpicam-vid:0 with format BGR3...
+2026-01-10 23:00:00,839 INFO [video] Opening source rpicam-vid:0 width=1920 height=1280 fmt=BGR3 fps=30 fourcc=BGR3
+2026-01-10 23:00:00,839 INFO [video] Using rpicam-vid raw BGR pipe: rpicam-vid --timeout 0 --camera 0 --width 1920 --height 1280 --framerate 30 --codec bgr --libav-format rawvideo --output - --nopreview
+2026-01-10 23:00:02,386 ERROR Unhandled exception
+Traceback (most recent call last):
+  File "/home/torfi/multicam-remap/main.py", line 56, in main
+    app = App(args.config, args.fullscreen)
+  File "/home/torfi/multicam-remap/src/app.py", line 27, in __init__
+    self._init_devices()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "/home/torfi/multicam-remap/src/app.py", line 111, in _init_devices
+    raise e
+  File "/home/torfi/multicam-remap/src/app.py", line 102, in _init_devices
+    dev = CameraDevice(cc)
+  File "/home/torfi/multicam-remap/src/capture.py", line 495, in __init__
+    self.actual_h, self.actual_w = frame.shape[:2]
+                                   ^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'shape'

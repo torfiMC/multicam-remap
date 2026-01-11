@@ -1,0 +1,25 @@
+venv) torfi@dronepi:~/multicam-remap $ python main.py 
+2026-01-10 23:01:05,175 INFO Logging initialized at logs/app-20260110-230105.log
+2026-01-10 23:01:05,178 INFO [config] Skipping disabled camera id=/dev/v4l/by-id/usb-MACROSILICON_USB_Video_20200909-video-index0 name=Back Lens
+2026-01-10 23:01:05,178 INFO [config] Skipping disabled camera id=/dev/v4l/by-id/usb-VNV_USB_Camera-video-index0 name=Front Lens
+2026-01-10 23:01:05,178 INFO [config] Skipping disabled camera id=/dev/v4l/by-id/usb-VNV_USB_Camera-video-index0 name=Back Lens
+2026-01-10 23:01:05,178 INFO [config] Active cameras: 1
+2026-01-10 23:01:05,178 INFO [config] cam id=rpicam-vid:0 name=OV5647 (rpicam) type=single res=[1920, 1280] fmt=auto fps=30
+Couldn't open plugin directory: No such file or directory
+No plugins found, falling back on no decorations
+2026-01-10 23:01:05,279 INFO Initializing new device rpicam-vid:0 for 'OV5647 (rpicam)'
+2026-01-10 23:01:05,279 INFO [video] Opening source rpicam-vid:0 width=1920 height=1280 fmt=None fps=30 fourcc=None
+2026-01-10 23:01:05,279 INFO [video] Using rpicam-vid raw BGR pipe: rpicam-vid --timeout 0 --camera 0 --width 1920 --height 1280 --framerate 30 --codec bgr --libav-format rawvideo --output - --nopreview
+2026-01-10 23:01:05,279 INFO [video] Device opened id=rpicam-vid:0 fmt=None req_res=1920x1280 fps=30
+2026-01-10 23:01:06,923 WARNING [video] Initial frame read failed for rpicam-vid:0 at 1920x1280 fmt=None. Current props: fourcc=---- fps=30.0 res=1920.0x1280.0
+2026-01-10 23:01:06,923 WARNING [video] Retrying rpicam-vid with yuv420 -> ffmpeg pipeline after BGR pipe read failure
+2026-01-10 23:01:06,923 INFO [video] Opening source rpicam-vid:0 width=1920 height=1280 fmt=None fps=30 fourcc=None
+2026-01-10 23:01:06,923 INFO [video] Using rpicam-vid pipe: rpicam-vid --timeout 0 --camera 0 --width 1920 --height 1280 --framerate 30 --codec yuv420 --libav-format rawvideo --output - --nopreview | ffmpeg -f rawvideo -pix_fmt yuv420p -s 1920x1280 -r 30 -i pipe:0 -f rawvideo -pix_fmt bgr24 pipe:1
+[ WARN:0@1.769] global cap.cpp:215 open VIDEOIO(FFMPEG): backend is generally available but can't be used to capture by name
+2026-01-10 23:01:06,923 WARNING [video] OpenCV FFMPEG backend failed; using raw pipe reader fallback
+2026-01-10 23:01:06,924 INFO [debug] Requested 1920x1280, got 1920.0x1280.0
+2026-01-10 23:01:06,924 INFO [video] Active FOURCC: 'BGR3' (Int: 861030210)
+2026-01-10 23:01:06,924 INFO [video] Active FPS: 30.0
+[lens] Generating lookup lookup_1920x1280_to_1024x512_fov65.0_pfov180.0.npy
+(venv) torfi@dronepi:~/multicam-remap $ 
+

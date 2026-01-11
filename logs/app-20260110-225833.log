@@ -1,0 +1,28 @@
+2026-01-10 22:58:33,339 INFO Logging initialized at logs/app-20260110-225833.log
+2026-01-10 22:58:33,342 INFO [config] Skipping disabled camera id=/dev/v4l/by-id/usb-MACROSILICON_USB_Video_20200909-video-index0 name=Back Lens
+2026-01-10 22:58:33,342 INFO [config] Skipping disabled camera id=/dev/v4l/by-id/usb-VNV_USB_Camera-video-index0 name=Front Lens
+2026-01-10 22:58:33,342 INFO [config] Skipping disabled camera id=/dev/v4l/by-id/usb-VNV_USB_Camera-video-index0 name=Back Lens
+2026-01-10 22:58:33,342 INFO [config] Active cameras: 1
+2026-01-10 22:58:33,342 INFO [config] cam id=rpicam-vid:0 name=OV5647 (rpicam) type=single res=[1920, 1280] fmt=auto fps=30
+2026-01-10 22:58:33,444 INFO Initializing new device rpicam-vid:0 for 'OV5647 (rpicam)'
+2026-01-10 22:58:33,444 INFO [video] Opening source rpicam-vid:0 width=1920 height=1280 fmt=None fps=30 fourcc=None
+2026-01-10 22:58:33,444 INFO [video] Using rpicam-vid raw BGR pipe: rpicam-vid --timeout 0 --camera 0 --width 1920 --height 1280 --framerate 30 --codec bgr --libav-format rawvideo --output - --nopreview
+2026-01-10 22:58:33,444 INFO [debug] Requested 1920x1280, got 1920.0x1280.0
+2026-01-10 22:58:33,444 INFO [video] Active FOURCC: 'BGR3' (Int: 861030210)
+2026-01-10 22:58:33,444 INFO [video] Active FPS: 30.0
+2026-01-10 22:58:33,444 INFO [video] Device opened id=rpicam-vid:0 fmt=None req_res=1920x1280 fps=30
+2026-01-10 22:58:35,087 WARNING [video] Initial frame read failed for rpicam-vid:0 at 1920x1280 fmt=None. Current props: fourcc=---- fps=30.0 res=1920.0x1280.0
+2026-01-10 22:58:35,090 ERROR Unhandled exception
+Traceback (most recent call last):
+  File "/home/torfi/multicam-remap/main.py", line 56, in main
+    app = App(args.config, args.fullscreen)
+  File "/home/torfi/multicam-remap/src/app.py", line 27, in __init__
+    self._init_devices()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "/home/torfi/multicam-remap/src/app.py", line 111, in _init_devices
+    raise e
+  File "/home/torfi/multicam-remap/src/app.py", line 102, in _init_devices
+    dev = CameraDevice(cc)
+  File "/home/torfi/multicam-remap/src/capture.py", line 413, in __init__
+    raise RuntimeError(f"Failed to read initial frame from camera {self.id_str}")
+RuntimeError: Failed to read initial frame from camera rpicam-vid:0

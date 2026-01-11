@@ -1,28 +1,19 @@
 cameras:
-- id: dshow:0
-  name: Front Lens
+- id: /dev/v4l/by-id/usb-MACROSILICON_USB_Video_20200909-video-index0
+  name: Back Lens
+  enabled: false
   resolution:
-  - 640
-  - 480
-  type: front
-  fov: 40.0
-  yaw: 40.0
-  pitch: 0.0
+  - 720
+  - 576
+  type: single
+  fov: 60.0
+  yaw: 0.0
+  pitch: 00.0
   roll: 0.0
   orientation: 0.0
-- id: dshow:1
-  name: other cam
-  resolution:
-  - 640
-  - 480
-  type: front
-  fov: 50.0
-  yaw: -40.0
-  pitch: 0.0
-  roll: 0.0
-  orientation: -270.0
-- id: dshow:2
+- id: /dev/v4l/by-id/usb-VNV_USB_Camera-video-index0
   name: Front Lens
+  enabled: false
   resolution:
   - 2560
   - 720
@@ -32,8 +23,9 @@ cameras:
   pitch: 0.0
   roll: 0.0
   orientation: 0.0
-- id: dshow:2
+- id: /dev/v4l/by-id/usb-VNV_USB_Camera-video-index0
   name: Back Lens
+  enabled: false
   resolution:
   - 2560
   - 720
@@ -43,3 +35,20 @@ cameras:
   pitch: 90.0
   roll: 0.0
   orientation: 0.0
+- id: rpicam-vid:0
+  name: OV5647 (rpicam)
+  enabled: true
+  format: auto
+  fps: 30
+  resolution:
+  - 1280
+  - 720
+  type: single
+  fov: 65.0
+  yaw: 0.0
+  pitch: 0.0
+  roll: 0.0
+  orientation: 0.0
+logging:
+  enabled: true
+  dir: logs
