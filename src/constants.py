@@ -22,3 +22,8 @@ KEY_ADJUST_SMALL = 1.0
 
 # Edit Mode
 ATTR_NAMES = ["Yaw", "Pitch", "Roll", "Orientation"]
+
+# Sphere mesh tessellation (inside/ orbit views)
+SPHERE_LAT_STEPS = 96
+SPHERE_LON_STEPS = 192
+SPHERE_RADIUS = 10.0

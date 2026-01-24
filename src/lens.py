@@ -4,6 +4,7 @@ from OpenGL import GL
 from src.capture import CameraDevice
 from src.lookup import generate_lookup_float
 from src.constants import LOOKUP_WIDTH, LOOKUP_HEIGHT, PROJECTION_FOV_DEG, DEFAULT_FOV
+from src.math_utils import focal_length_pixels
 
 
 def _sanitize_filename_component(s: str) -> str:
@@ -19,11 +20,11 @@ def _sanitize_filename_component(s: str) -> str:
 
 
 def _clamp01(x: float) -> float:
-     if x < 0.0:
-          return 0.0
-     if x > 1.0:
-          return 1.0
-     return x
+    if x < 0.0:
+        return 0.0
+    if x > 1.0:
+        return 1.0
+    return x
 
 
 def _ensure_edge_distance_mask_png(
@@ -35,6 +36,7 @@ def _ensure_edge_distance_mask_png(
     hfov_deg: float,
     texture_fov_deg: float,
     mask_mindistance: float,
+    distortion_type: str,
     maskblur: int = 0,
     force_regen: bool = False,
     supersample: int = 4,
@@ -61,12 +63,12 @@ def _ensure_edge_distance_mask_png(
     high_w = int(out_w) * ss
     high_h = int(out_h) * ss
 
+    model = str(distortion_type or "fisheye").strip().lower()
+    if model not in ("fisheye", "corrected"):
+        model = "fisheye"
+
     try:
-        theta_x = math.radians(float(hfov_deg) * 0.5)
-        if theta_x <= 1e-9:
-            raise ValueError("hfov_deg must be > 0")
-        r_x = float(single_lens_w) * 0.5
-        f_pix = r_x / theta_x
+        f_pix = focal_length_pixels(model, float(single_lens_w), float(hfov_deg))
         cx = float(single_lens_w) * 0.5
         cy = float(single_lens_h) * 0.5
         hfov_rad = math.radians(float(texture_fov_deg))
@@ -103,15 +105,19 @@ def _ensure_edge_distance_mask_png(
         dz = cl * cos_lon
 
         zpos = dz > 0.0
-        zc = np.clip(dz, -1.0, 1.0)
-        theta = np.arccos(zc).astype(np.float32)
 
-        r_xy = np.sqrt(dx * dx + dy * dy, dtype=np.float32)
-        inv_rxy = np.where(r_xy > eps, 1.0 / r_xy, 0.0).astype(np.float32)
-
-        r = f_pix_f * theta
-        px = cx_f + r * (dx * inv_rxy)
-        py = cy_f + r * (dy * inv_rxy)
+        if model == "corrected":
+            inv_z = np.where(np.abs(dz) > eps, 1.0 / dz, 0.0).astype(np.float32)
+            px = cx_f + f_pix_f * (dx * inv_z)
+            py = cy_f + f_pix_f * (dy * inv_z)
+        else:
+            zc = np.clip(dz, -1.0, 1.0)
+            theta = np.arccos(zc).astype(np.float32)
+            r_xy = np.sqrt(dx * dx + dy * dy, dtype=np.float32)
+            inv_rxy = np.where(r_xy > eps, 1.0 / r_xy, 0.0).astype(np.float32)
+            r = f_pix_f * theta
+            px = cx_f + r * (dx * inv_rxy)
+            py = cy_f + r * (dy * inv_rxy)
 
         valid = (
             zpos
@@ -171,21 +177,24 @@ class LensView:
         # Config extraction
         self.fov = float(cam_config.get("fov", DEFAULT_FOV))
         self.mask_mindistance = _clamp01(float(cam_config.get("mask_mindistance", 0.0)))
+        self.distortion = str(cam_config.get("distortion", "fisheye") or "fisheye").strip().lower()
+        if self.distortion not in ("fisheye", "corrected"):
+            self.distortion = "fisheye"  # fall back to the default mapping
         cam_type = cam_config.get("type", "single")
         
         # Determine UV mapping settings based on type
         if cam_type == "dual_left":
-             self.uv_scale_x = 0.5
-             self.uv_offset_x = 0.0
-             pixel_w_divisor = 2
+            self.uv_scale_x = 0.5
+            self.uv_offset_x = 0.0
+            pixel_w_divisor = 2
         elif cam_type == "dual_right":
-             self.uv_scale_x = 0.5
-             self.uv_offset_x = 0.5
-             pixel_w_divisor = 2
+            self.uv_scale_x = 0.5
+            self.uv_offset_x = 0.5
+            pixel_w_divisor = 2
         else: # single
-             self.uv_scale_x = 1.0
-             self.uv_offset_x = 0.0
-             pixel_w_divisor = 1
+            self.uv_scale_x = 1.0
+            self.uv_offset_x = 0.0
+            pixel_w_divisor = 1
 
         # Transform (Use explicit values from config)
         self.world_yaw = float(cam_config.get("yaw", 0.0))
@@ -205,7 +214,7 @@ class LensView:
         cam_name_prefix = _sanitize_filename_component(cam_config.get("name", "camera"))
         
         # Using simple naming scheme based on properties to reuse cache
-        cache_filename = f"{cam_name_prefix}_lookup_{lens_pixel_w}x{lens_pixel_h}_to_{self.out_w}x{self.out_h}_fov{self.fov}_pfov{PROJ_FOV}.npy"
+        cache_filename = f"{cam_name_prefix}_lookup_{lens_pixel_w}x{lens_pixel_h}_to_{self.out_w}x{self.out_h}_fov{self.fov}_pfov{PROJ_FOV}_dist{self.distortion}.npy"
 
         should_use_cache = bool(cache_lookup)
         if should_use_cache and os.path.exists(cache_filename):
@@ -225,6 +234,7 @@ class LensView:
                 self.out_h,
                 self.fov,
                 PROJ_FOV,
+                distortion_type=self.distortion,
             )
             try:
                 np.save(cache_filename, self.lookup_data)
@@ -248,6 +258,7 @@ class LensView:
             hfov_deg=self.fov,
             texture_fov_deg=PROJ_FOV,
             mask_mindistance=self.mask_mindistance,
+            distortion_type=self.distortion,
             maskblur=maskblur_i,
             force_regen=(not bool(cache_lookup)),
         )
@@ -262,17 +273,19 @@ class LensView:
         
         # Format (Float16/32 -> RG16F)
         try:
-             # GL_RG16F = 0x822F, GL_RG = 0x8227
-             internal_fmt = 0x822F
-             fmt = 0x8227
-             # Try standard names if available
-             if hasattr(GL, 'GL_RG16F'): internal_fmt = GL.GL_RG16F
-             if hasattr(GL, 'GL_RG'): fmt = GL.GL_RG
-             
-             GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, internal_fmt, self.out_w, self.out_h, 0, fmt, GL.GL_FLOAT, self.lookup_data)
+            # GL_RG16F = 0x822F, GL_RG = 0x8227
+            internal_fmt = 0x822F
+            fmt = 0x8227
+            # Try standard names if available
+            if hasattr(GL, 'GL_RG16F'):
+                internal_fmt = GL.GL_RG16F
+            if hasattr(GL, 'GL_RG'):
+                fmt = GL.GL_RG
+
+            GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, internal_fmt, self.out_w, self.out_h, 0, fmt, GL.GL_FLOAT, self.lookup_data)
         except Exception as e:
-             # Fallback
-             print(f"[warn] Failed to upload float texture: {e}")
+            # Fallback
+            print(f"[warn] Failed to upload float texture: {e}")
 
         # Optional mask texture for soft border blending
         self.tex_mask = 0

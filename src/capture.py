@@ -168,7 +168,9 @@ class CameraDevice:
         self.name = config_dict.get("name", f"Cam_{self.id_str}")
         self.res = config_dict.get("resolution", [1280, 720])
         self.width, self.height = self.res[0], self.res[1]
-        self.is_dual = (config_dict.get("type", "single") == "dual")
+        type_str = str(config_dict.get("type", "single")).lower()
+        self.is_dual = (type_str == "dual")
+        self.is_split = type_str.startswith("dual")  # dual, dual_left, dual_right
         self.format = config_dict.get("format", "MJPG")
 
         self.dshow_query_options = bool(config_dict.get("dshow_query_options", False))
@@ -238,14 +240,43 @@ class CameraDevice:
         self.cap.release()
 
 
-    def upload_texture(self):
+    def _annotate_frame(self, frame, label: str, split: bool = False):
+        # Draw centered label with simple outline for readability
+        if frame is None or label is None:
+            return frame
+        h, w = frame.shape[:2]
+        scale = max(0.5, min(2.5, h / 720.0))
+        thickness = max(1, int(round(scale * 2)))
+        font = cv2.FONT_HERSHEY_SIMPLEX
+
+        def draw_at(cx: int, cy: int):
+            (text_w, text_h), baseline = cv2.getTextSize(label, font, scale, thickness)
+            x = max(0, int(round(cx - text_w / 2)))
+            y = max(text_h + baseline, int(round(cy + text_h / 2)))
+            cv2.putText(frame, label, (x, y), font, scale, (0, 0, 0), thickness + 2, cv2.LINE_AA)
+            cv2.putText(frame, label, (x, y), font, scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+        if split and w >= 2:
+            half_w = w // 2
+            draw_at(half_w // 2, h // 2)
+            draw_at(half_w + half_w // 2, h // 2)
+        else:
+            draw_at(w // 2, h // 2)
+        return frame
+
+    def upload_texture(self, edit_mode: bool = False):
         if self.new_frame_ready:
+            with self.lock:
+                frame = self.last_frame.copy() if edit_mode else self.last_frame
+                self.new_frame_ready = False
+
+            if edit_mode:
+                frame = self._annotate_frame(frame, self.name, split=self.is_split)
+
             GL.glActiveTexture(GL.GL_TEXTURE0)
             GL.glBindTexture(GL.GL_TEXTURE_2D, self.tex_id)
             
             # Optimization: Upload BGR directly and let the driver/GPU handle swizzle (or store as is)
             # Avoiding cv2.cvtColor(..., COLOR_BGR2RGB) saves significant CPU time.
             GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT, 1)
-            GL.glTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0, self.actual_w, self.actual_h, GL.GL_BGR, GL.GL_UNSIGNED_BYTE, self.last_frame)
-            
-            self.new_frame_ready = False
+            GL.glTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0, self.actual_w, self.actual_h, GL.GL_BGR, GL.GL_UNSIGNED_BYTE, frame)

@@ -58,6 +58,22 @@ void main() {
 }
 """
 
+FRAG_SRC_RAW = r"""
+#version 120
+uniform sampler2D u_src;
+uniform float u_uv_offset_x;
+uniform float u_uv_scale_x;
+
+varying vec2 v_uv;
+
+void main() {
+    vec2 src_uv = v_uv;
+    src_uv.y = 1.0 - src_uv.y; // Flip V so text isn't mirrored vertically
+    src_uv.x = src_uv.x * u_uv_scale_x + u_uv_offset_x;
+    gl_FragColor = texture2D(u_src, src_uv);
+}
+"""
+
 FRAG_SRC_FLOAT = r"""
 #version 120
 uniform sampler2D u_src;     // combined source frame (left|right)
@@ -111,6 +127,25 @@ void main() {
     float a = texture2D(u_mask, v_uv).r;
 
     gl_FragColor = vec4(rgb, a);
+}
+"""
+
+GRID_VERT_SRC = r"""
+#version 120
+attribute vec3 a_pos;
+uniform mat4 u_mvp;
+
+void main() {
+    gl_Position = u_mvp * vec4(a_pos, 1.0);
+}
+"""
+
+GRID_FRAG_SRC = r"""
+#version 120
+uniform vec4 u_color;
+
+void main() {
+    gl_FragColor = u_color;
 }
 """
 

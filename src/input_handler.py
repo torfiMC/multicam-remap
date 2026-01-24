@@ -70,13 +70,29 @@ class InputHandler:
             print(f"[edit] {cam_name} {ATTR_NAMES[self.app.sel_attr_idx]} -> {getattr(lens, ['world_yaw', 'world_pitch', 'world_roll', 'orientation'][self.app.sel_attr_idx])}")
 
     def _handle_view_keys(self, key):
+        scene = self.app.scene
         if key == glfw.KEY_R: 
-            self.app.yaw = self.app.pitch = self.app.roll = 0.0; self.app.fov = 70.0
+            self.app.reset_view()
         elif key == glfw.KEY_Q: 
-            self.app.roll -= 2.0
+            scene.roll -= 2.0
         elif key == glfw.KEY_V:
-            self.app.view_sphere = not self.app.view_sphere
-            print(f"[view] Mode: {'Sphere' if self.app.view_sphere else 'Equirect'}")
+            target_mode = 'equirect' if scene.view_mode != 'equirect' else 'inside'
+            self.app.set_view_mode(target_mode)
+            print(f"[view] Mode: {self._mode_label()}")
+        elif key == glfw.KEY_S:
+            if scene.view_mode == 'orbit':
+                self.app.set_view_mode(scene.prev_view_mode or 'inside')
+            else:
+                scene.prev_view_mode = scene.view_mode
+                self.app.set_view_mode('orbit')
+            print(f"[view] Mode: {self._mode_label()}")
+        elif key == glfw.KEY_F:
+            if scene.view_mode == 'all':
+                self.app.set_view_mode(scene.prev_view_mode or 'inside')
+            else:
+                scene.prev_view_mode = scene.view_mode
+                self.app.set_view_mode('all')
+            print(f"[view] Mode: {self._mode_label()}")
 
     def on_mouse(self, win, button, action, mods):
         if button == glfw.MOUSE_BUTTON_LEFT:
@@ -91,11 +107,35 @@ class InputHandler:
         dx = x - self.last_x
         dy = y - self.last_y
         self.last_x, self.last_y = x, y
-        
-        self.app.yaw += dx * MOUSE_SENSITIVITY
-        self.app.pitch += dy * MOUSE_SENSITIVITY
-        self.app.pitch = max(-89.0, min(89.0, self.app.pitch))
+
+        scene = getattr(self.app, 'scene', None)
+        if scene is None:
+            return
+        mode = scene.view_mode if scene else 'inside'
+        if mode == 'orbit':
+            scene.orbit_angle_offset -= dx * MOUSE_SENSITIVITY
+            scene.orbit_pitch = max(-80.0, min(80.0, scene.orbit_pitch + dy * MOUSE_SENSITIVITY))
+        else:
+            scene.yaw += dx * MOUSE_SENSITIVITY
+            scene.pitch += dy * MOUSE_SENSITIVITY
+            scene.pitch = max(-89.0, min(89.0, scene.pitch))
 
     def on_scroll(self, win, xoff, yoff):
-        self.app.fov -= yoff * SCROLL_SENSITIVITY
-        self.app.fov = max(20.0, min(180.0, self.app.fov))
+        scene = getattr(self.app, 'scene', None)
+        if not scene:
+            return
+        scene.fov -= yoff * SCROLL_SENSITIVITY
+        scene.fov = max(20.0, min(180.0, scene.fov))
+
+    def _mode_label(self) -> str:
+        scene = getattr(self.app, 'scene', None)
+        if not scene:
+            return 'Sphere (inside)'
+        mode = scene.view_mode
+        if mode == 'equirect':
+            return 'Equirect'
+        if mode == 'orbit':
+            return 'Sphere (orbit)'
+        if mode == 'all':
+            return 'All Cameras'
+        return 'Sphere (inside)'

@@ -1,37 +1,71 @@
 cameras:
 - id: dshow:0
+  enabled: false
   name: Webcam
   resolution:
-  - 640
-  - 480
+  - 1920
+  - 1080
   type: front
-  fov: 40.0
-  yaw: 40.0
-  pitch: 0.0
+  fov: 90.0
+  yaw: -1494.0
+  pitch: 10.0
   roll: 0.0
   orientation: 0.0
   mask_mindistance: 0.9
+  distortion: corrected
 - id: dshow:2
-  name: Frontlens
-  resolution:
-  - 2560
-  - 720
-  type: dual_left
-  fov: 160.0
-  yaw: 0.0
-  pitch: 0.0
-  roll: 0.0
-  orientation: 0.0
-  mask_mindistance: 0.9
-- id: dshow:2
-  name: Backlens
+  enabled: true
+  name: Stereolens Left
   resolution:
   - 2560
   - 720
   type: dual_right
-  fov: 160.0
+  fov: 170.0
   yaw: 0.0
-  pitch: 90.0
-  roll: 0.0
+  pitch: 0.0
+  roll: -90.0
   orientation: 0.0
   mask_mindistance: 0.9
+  distortion: fisheye
+- id: dshow:2
+  enabled: true
+  name: Stereolens Right
+  resolution:
+  - 2560
+  - 720
+  type: dual_left
+  fov: 170.0
+  yaw: 180.0
+  pitch: -0.0
+  roll: 90.0
+  orientation: 0.0
+  mask_mindistance: 0.9
+  distortion: fisheye
+- id: dshow:3
+  enabled: true
+  name: Stereolens Left2
+  resolution:
+  - 2560
+  - 720
+  type: dual_right
+  fov: 170.0
+  yaw: 270.0
+  pitch: -0.0
+  roll: -90.0
+  orientation: 0.0
+  mask_mindistance: 0.9
+  distortion: fisheye
+- id: dshow:3
+  enabled: true
+  name: Stereolens Right2
+  resolution:
+  - 2560
+  - 720
+  type: dual_left
+  fov: 170.0
+  yaw: 90.0
+  pitch: 0.0
+  roll: 90.0
+  orientation: 0.0
+  mask_mindistance: 0.9
+  distortion: fisheye

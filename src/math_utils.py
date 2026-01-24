@@ -42,8 +42,72 @@ def mat4_from_yaw_pitch_roll(yaw_deg: float, pitch_deg: float, roll_deg: float) 
         [0.0, 0.0, 0.0, 1.0],
     ], dtype=np.float32)
 
-    # Return View Matrix V = Rz(roll) * Rx(pitch) * Ry(yaw)
+    # Default (old) order: roll -> pitch -> yaw
     return Rz @ Rx @ Ry
+
+
+def mat4_from_yaw_pitch_roll_turret(yaw_deg: float, pitch_deg: float, roll_deg: float) -> np.ndarray:
+    """Yaw then pitch then roll, like a turret stack.
+
+    This keeps the newer behavior while preserving the legacy order for the
+    inside camera view matrix.
+    """
+    yaw = math.radians(yaw_deg)
+    pitch = math.radians(pitch_deg)
+    roll = math.radians(roll_deg)
+
+    cy, sy = math.cos(yaw), math.sin(yaw)
+    cp, sp = math.cos(pitch), math.sin(pitch)
+    cr, sr = math.cos(roll), math.sin(roll)
+
+    Ry = np.array([
+        [ cy, 0.0, sy, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [-sy, 0.0, cy, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ], dtype=np.float32)
+
+    Rx = np.array([
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0,  cp, -sp, 0.0],
+        [0.0,  sp,  cp, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ], dtype=np.float32)
+
+    Rz = np.array([
+        [ cr, -sr, 0.0, 0.0],
+        [ sr,  cr, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ], dtype=np.float32)
+
+    return Ry @ Rx @ Rz
+
+
+def mat4_look_at(eye: np.ndarray, target: np.ndarray, up: np.ndarray) -> np.ndarray:
+    # Right-handed look-at matrix matching OpenGL-style view transforms.
+    f = target - eye
+    f_norm = np.linalg.norm(f)
+    if f_norm < 1e-8:
+        raise ValueError("eye and target positions are too close for look_at")
+    f = f / f_norm
+
+    s = np.cross(f, up)
+    s_norm = np.linalg.norm(s)
+    if s_norm < 1e-8:
+        raise ValueError("up vector is parallel to view direction")
+    s = s / s_norm
+
+    u = np.cross(s, f)
+
+    m = np.identity(4, dtype=np.float32)
+    m[0, 0:3] = s
+    m[1, 0:3] = u
+    m[2, 0:3] = -f
+    m[0, 3] = -np.dot(s, eye)
+    m[1, 3] = -np.dot(u, eye)
+    m[2, 3] = np.dot(f, eye)
+    return m
 
 def rotation_yaw_deg(yaw_deg: float) -> np.ndarray:
     y = math.radians(yaw_deg)
@@ -85,6 +149,47 @@ def project_fisheye_equidistant_rect(d_cam: np.ndarray, f_pix: float, cx: float,
     px = cx + r * (d_cam[0] / r_xy)
     py = cy + r * (d_cam[1] / r_xy)
     return (px, py, theta)
+
+
+def project_rectilinear_pinhole(d_cam: np.ndarray, f_pix: float, cx: float, cy: float):
+    """Standard pinhole projection for distortion-corrected lenses.
+
+    Assumes `d_cam` is a direction vector in camera space. Only the front hemisphere
+    (z > 0) is considered valid. Returns pixel coordinates and the polar angle to z
+    for API parity with the fisheye projector.
+    """
+    z = d_cam[2]
+    if z <= 0.0:
+        return None
+
+    px = cx + f_pix * (d_cam[0] / z)
+    py = cy + f_pix * (d_cam[1] / z)
+    theta = math.acos(max(-1.0, min(1.0, z)))
+    return (px, py, theta)
+
+
+def focal_length_pixels(distortion_type: str, image_width: float, hfov_deg: float) -> float:
+    """Compute focal length in pixels for the given horizontal FOV and model.
+
+    - fisheye: equidistant model, r = f * theta
+    - corrected: rectilinear pinhole, tan(theta) = x / f
+    """
+    theta_x = math.radians(float(hfov_deg) * 0.5)
+    if theta_x <= 1e-9:
+        raise ValueError("hfov_deg must be > 0")
+
+    model = str(distortion_type or "fisheye").strip().lower()
+    r_x = float(image_width) * 0.5
+
+    if model == "corrected":
+        denom = math.tan(theta_x)
+    else:
+        denom = theta_x
+
+    if abs(denom) <= 1e-12:
+        raise ValueError("hfov_deg results in invalid focal length")
+
+    return r_x / denom
 
 def pack_u16(v: int):
     v = max(0, min(65535, int(v)))

@@ -2,3 +2,5 @@
 *.npy
 lookup_640x480_to_1024x512_fov50.0_pfov180.0_edgemask_mindist0.900.png
 Webcam_lookup_640x480_to_1024x512_fov40.0_pfov180.0_edgemask_mindist0.900_blur3.png
+Stereolens_Left2_lookup_1280x1440_to_1024x512_fov160.0_pfov180.0_distfisheye_edgemask_mindist0.500_blur3.png
+*.png

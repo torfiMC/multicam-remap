@@ -69,3 +69,27 @@ def make_quad():
     ], dtype=np.float32)
     idx = np.array([0, 1, 2, 0, 2, 3], dtype=np.uint32)
     return verts, uvs, idx
+
+
+def make_grid_lines(extent: float = 20.0, spacing: float = 1.0):
+    # Generates XZ plane grid lines at Y=0 extending from -extent..+extent.
+    # Returns flat vertex array suitable for GL_LINES.
+    pts = []
+    n = int(max(1, extent / spacing))
+    max_range = spacing * n
+
+    # Lines parallel to Z (vary X)
+    x = -max_range
+    while x <= max_range + 1e-5:
+        pts.append((x, 0.0, -max_range))
+        pts.append((x, 0.0, max_range))
+        x += spacing
+
+    # Lines parallel to X (vary Z)
+    z = -max_range
+    while z <= max_range + 1e-5:
+        pts.append((-max_range, 0.0, z))
+        pts.append((max_range, 0.0, z))
+        z += spacing
+
+    return np.array(pts, dtype=np.float32)

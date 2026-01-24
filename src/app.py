@@ -1,18 +1,21 @@
 import os
-import sys
-import time
-import ctypes
 import yaml
-import numpy as np
 import glfw
-from OpenGL import GL
 
 from src.capture import CameraDevice
 from src.lens import LensView
-from src.geometry import make_inside_sphere, make_quad
-from src.shaders import compile_shader, link_program, VERT_SRC, FRAG_SRC_FLOAT, FRAG_SRC_FLOAT_SOFTBORDER
-from src.math_utils import mat4_perspective, mat4_from_yaw_pitch_roll
-from src.constants import WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE
+from src.scene_state import SceneState
+from src.render.mesh import SphereMesh, QuadMesh
+from src.render.grid import Grid
+from src.render.renderer import Renderer
+from src.constants import (
+    WINDOW_WIDTH,
+    WINDOW_HEIGHT,
+    WINDOW_TITLE,
+    SPHERE_LAT_STEPS,
+    SPHERE_LON_STEPS,
+    SPHERE_RADIUS,
+)
 from src.input_handler import InputHandler
 
 class App:
@@ -55,6 +58,9 @@ class App:
         self.softborder = False
         self.cache_lookup = True
         self.maskblur = 0
+        self.sphere_lat_steps = SPHERE_LAT_STEPS
+        self.sphere_lon_steps = SPHERE_LON_STEPS
+        self.sphere_radius = SPHERE_RADIUS
         try:
             base_dir = os.path.dirname(os.path.abspath(self.config_path))
             viewer_path = os.path.join(base_dir, 'config.yaml')
@@ -83,6 +89,17 @@ class App:
                 for k in ('yaw', 'pitch', 'roll', 'fov'):
                     if k in view:
                         self.viewer_config[k] = float(view[k])
+
+                mesh_cfg = viewer_data.get('mesh', viewer_data) or {}
+                try:
+                    if 'sphere_lat_steps' in mesh_cfg:
+                        self.sphere_lat_steps = max(8, int(mesh_cfg['sphere_lat_steps']))
+                    if 'sphere_lon_steps' in mesh_cfg:
+                        self.sphere_lon_steps = max(8, int(mesh_cfg['sphere_lon_steps']))
+                    if 'sphere_radius' in mesh_cfg:
+                        self.sphere_radius = float(mesh_cfg['sphere_radius'])
+                except Exception as e:
+                    print(f"[warn] mesh config ignored: {e}")
         except Exception as e:
             print(f"[warn] Failed to load viewer config.yaml: {e}")
 
@@ -118,6 +135,17 @@ class App:
         for i, cc in enumerate(self.cam_configs):
             dev_id = str(cc.get("id", "0"))
             cam_name = cc.get('name', dev_id)
+
+            enabled_raw = cc.get('enabled', True)
+            enabled = enabled_raw
+            if isinstance(enabled_raw, str):
+                enabled = enabled_raw.strip().lower() not in ('0', 'false', 'no', 'off')
+            else:
+                enabled = bool(enabled_raw)
+
+            if not enabled:
+                print(f"[info] Camera '{cam_name}' ({dev_id}) disabled in config; skipping.")
+                continue
 
             if dev_id in failed_dev_ids:
                 print(f"[warn] Skipping camera '{cam_name}' ({dev_id}) (previously failed to open)")
@@ -160,77 +188,44 @@ class App:
 
     def _init_gl(self):
         PROJ_FOV = 180.0
-        # Geometry
-        self.verts, self.uvs, self.indices = make_inside_sphere(
-            lat_steps=64, lon_steps=64, radius=10.0, fov_deg=PROJ_FOV
+        self.sphere_mesh = SphereMesh(
+            lat_steps=self.sphere_lat_steps,
+            lon_steps=self.sphere_lon_steps,
+            radius=self.sphere_radius,
+            fov_deg=PROJ_FOV,
         )
-        
-        # GL Objects
-        self.vbo_pos = GL.glGenBuffers(1)
-        self.vbo_uv = GL.glGenBuffers(1)
-        self.ebo = GL.glGenBuffers(1)
-
-        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.vbo_pos)
-        GL.glBufferData(GL.GL_ARRAY_BUFFER, self.verts.nbytes, self.verts, GL.GL_STATIC_DRAW)
-        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.vbo_uv)
-        GL.glBufferData(GL.GL_ARRAY_BUFFER, self.uvs.nbytes, self.uvs, GL.GL_STATIC_DRAW)
-        GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.ebo)
-        GL.glBufferData(GL.GL_ELEMENT_ARRAY_BUFFER, self.indices.nbytes, self.indices, GL.GL_STATIC_DRAW)
-
-        # Quad Geometry (for 2D View)
-        self.q_verts, self.q_uvs, self.q_indices = make_quad()
-        
-        self.q_vbo_pos = GL.glGenBuffers(1)
-        self.q_vbo_uv = GL.glGenBuffers(1)
-        self.q_ebo = GL.glGenBuffers(1)
-
-        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.q_vbo_pos)
-        GL.glBufferData(GL.GL_ARRAY_BUFFER, self.q_verts.nbytes, self.q_verts, GL.GL_STATIC_DRAW)
-        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.q_vbo_uv)
-        GL.glBufferData(GL.GL_ARRAY_BUFFER, self.q_uvs.nbytes, self.q_uvs, GL.GL_STATIC_DRAW)
-        GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.q_ebo)
-        GL.glBufferData(GL.GL_ELEMENT_ARRAY_BUFFER, self.q_indices.nbytes, self.q_indices, GL.GL_STATIC_DRAW)
-
-        # Shader
-        vs = compile_shader(VERT_SRC, GL.GL_VERTEX_SHADER)
-        fs_src = FRAG_SRC_FLOAT_SOFTBORDER if getattr(self, 'softborder', False) else FRAG_SRC_FLOAT
-        fs = compile_shader(fs_src, GL.GL_FRAGMENT_SHADER)
-        self.prog = link_program(vs, fs)
-
-        # Uniform locs
-        self.u_locs = {
-            'a_pos': GL.glGetAttribLocation(self.prog, "a_pos"),
-            'a_uv': GL.glGetAttribLocation(self.prog, "a_uv"),
-            'u_mvp': GL.glGetUniformLocation(self.prog, "u_mvp"),
-            'u_src': GL.glGetUniformLocation(self.prog, "u_src"),
-            'u_lookup': GL.glGetUniformLocation(self.prog, "u_lookup"),
-            'u_uv_offset_x': GL.glGetUniformLocation(self.prog, "u_uv_offset_x"),
-            'u_uv_scale_x': GL.glGetUniformLocation(self.prog, "u_uv_scale_x"),
-        }
-
-        if getattr(self, 'softborder', False):
-            self.u_locs['u_mask'] = GL.glGetUniformLocation(self.prog, "u_mask")
-
-        GL.glDisable(GL.GL_CULL_FACE)
-        GL.glDisable(GL.GL_DEPTH_TEST)
-
-        if getattr(self, 'softborder', False):
-            GL.glEnable(GL.GL_BLEND)
-            GL.glBlendFunc(GL.GL_SRC_ALPHA, GL.GL_ONE_MINUS_SRC_ALPHA)
-        else:
-            GL.glDisable(GL.GL_BLEND)
+        self.quad_mesh = QuadMesh()
+        self.grid = Grid(extent=25.0, spacing=1.0)
+        self.renderer = Renderer(self.softborder)
 
     def _init_state(self):
         vc = getattr(self, 'viewer_config', None) or {}
-        self.yaw = float(vc.get('yaw', 0.0))
-        self.pitch = float(vc.get('pitch', 0.0))
-        self.roll = float(vc.get('roll', 0.0))
-        self.fov = float(vc.get('fov', 70.0))
-        self.view_sphere = True
-        
+        fov = float(vc.get('fov', 70.0))
+        orbit_pitch = float(vc.get('orbit_pitch', 10.0))
+
+        self.scene = SceneState(
+            yaw=float(vc.get('yaw', 0.0)),
+            pitch=float(vc.get('pitch', 0.0)),
+            roll=float(vc.get('roll', 0.0)),
+            fov=fov,
+            view_mode='inside',
+            prev_view_mode='inside',
+            orbit_radius=14.0,
+            orbit_pitch=orbit_pitch,
+            orbit_angle_offset=0.0,
+        )
+        self.default_fov = fov
+        self.default_orbit_pitch = orbit_pitch
+
         self.edit_mode = False
         self.sel_lens_idx = 0
         self.sel_attr_idx = 0
+
+    def reset_view(self):
+        self.scene.reset(default_fov=self.default_fov, default_orbit_pitch=self.default_orbit_pitch)
+
+    def set_view_mode(self, mode: str):
+        self.scene.set_view_mode(mode)
 
     def run(self):
         while not glfw.window_should_close(self.window):
@@ -244,103 +239,13 @@ class App:
         glfw.terminate()
 
     def _update(self):
-         for dev in self.devices:
+        for dev in self.devices:
             dev.update()
-            dev.upload_texture()
+            dev.upload_texture(edit_mode=self.edit_mode or getattr(self.scene, 'view_mode', '') == 'all')
 
     def _render(self):
         fb_w, fb_h = glfw.get_framebuffer_size(self.window)
-        GL.glViewport(0, 0, fb_w, fb_h)
-        GL.glClearColor(0.0, 0.0, 0.0, 1.0)
-        GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
-
-        aspect = fb_w / float(fb_h if fb_h else 1)
-
-        if self.view_sphere:
-            proj = mat4_perspective(self.fov, aspect, 0.1, 100.0)
-            view = mat4_from_yaw_pitch_roll(self.yaw, self.pitch, self.roll)
-
-            GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.vbo_pos)
-            GL.glEnableVertexAttribArray(self.u_locs['a_pos'])
-            GL.glVertexAttribPointer(self.u_locs['a_pos'], 3, GL.GL_FLOAT, GL.GL_FALSE, 0, ctypes.c_void_p(0))
-            
-            GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.vbo_uv)
-            GL.glEnableVertexAttribArray(self.u_locs['a_uv'])
-            GL.glVertexAttribPointer(self.u_locs['a_uv'], 2, GL.GL_FLOAT, GL.GL_FALSE, 0, ctypes.c_void_p(0))
-            
-            GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.ebo)
-
-            GL.glUseProgram(self.prog)
-            GL.glUniform1i(self.u_locs['u_src'], 0)
-            GL.glUniform1i(self.u_locs['u_lookup'], 1)
-            if getattr(self, 'softborder', False):
-                GL.glUniform1i(self.u_locs['u_mask'], 2)
-
-            # Render in reverse order (Painter's Algorithm)
-            for lens in reversed(self.lenses): 
-                 m_world = mat4_from_yaw_pitch_roll(lens.world_yaw, lens.world_pitch, lens.world_roll)
-                 m_orient = mat4_from_yaw_pitch_roll(0.0, 0.0, lens.orientation)
-                 model = m_world @ m_orient
-                 mvp = proj @ view @ model
-                 
-                 GL.glUniformMatrix4fv(self.u_locs['u_mvp'], 1, GL.GL_TRUE, mvp)
-                 GL.glUniform1f(self.u_locs['u_uv_offset_x'], lens.uv_offset_x)
-                 GL.glUniform1f(self.u_locs['u_uv_scale_x'], lens.uv_scale_x)
-
-                 GL.glActiveTexture(GL.GL_TEXTURE0)
-                 GL.glBindTexture(GL.GL_TEXTURE_2D, lens.camera.tex_id)
-                 
-                 GL.glActiveTexture(GL.GL_TEXTURE1)
-                 GL.glBindTexture(GL.GL_TEXTURE_2D, lens.tex_lookup)
-
-                 if getattr(self, 'softborder', False):
-                     GL.glActiveTexture(GL.GL_TEXTURE2)
-                     GL.glBindTexture(GL.GL_TEXTURE_2D, getattr(lens, 'tex_mask', 0))
-
-                 GL.glDrawElements(GL.GL_TRIANGLES, len(self.indices), GL.GL_UNSIGNED_INT, None)
-
-        else:
-            # Equirectangular / 2D View
-            # Use an identity matrix for MVP to render flat to screen
-            mvp = np.eye(4, dtype=np.float32)
-
-            GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.q_vbo_pos)
-            GL.glEnableVertexAttribArray(self.u_locs['a_pos'])
-            GL.glVertexAttribPointer(self.u_locs['a_pos'], 3, GL.GL_FLOAT, GL.GL_FALSE, 0, ctypes.c_void_p(0))
-            
-            GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.q_vbo_uv)
-            GL.glEnableVertexAttribArray(self.u_locs['a_uv'])
-            GL.glVertexAttribPointer(self.u_locs['a_uv'], 2, GL.GL_FLOAT, GL.GL_FALSE, 0, ctypes.c_void_p(0))
-            
-            GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.q_ebo)
-
-            GL.glUseProgram(self.prog)
-            GL.glUniform1i(self.u_locs['u_src'], 0)
-            GL.glUniform1i(self.u_locs['u_lookup'], 1)
-            if getattr(self, 'softborder', False):
-                GL.glUniform1i(self.u_locs['u_mask'], 2)
-            GL.glUniformMatrix4fv(self.u_locs['u_mvp'], 1, GL.GL_TRUE, mvp)
-
-            # Render in reverse order. Note: This overlays multiple cameras on 0..1 UV.
-            # Since the lenses map to the SAME Equirectangular space (implied by the lookup),
-            # this will composite them.
-            for lens in reversed(self.lenses): 
-                 GL.glUniform1f(self.u_locs['u_uv_offset_x'], lens.uv_offset_x)
-                 GL.glUniform1f(self.u_locs['u_uv_scale_x'], lens.uv_scale_x)
-
-                 GL.glActiveTexture(GL.GL_TEXTURE0)
-                 GL.glBindTexture(GL.GL_TEXTURE_2D, lens.camera.tex_id)
-                 
-                 GL.glActiveTexture(GL.GL_TEXTURE1)
-                 GL.glBindTexture(GL.GL_TEXTURE_2D, lens.tex_lookup)
-
-                 if getattr(self, 'softborder', False):
-                     GL.glActiveTexture(GL.GL_TEXTURE2)
-                     GL.glBindTexture(GL.GL_TEXTURE_2D, getattr(lens, 'tex_mask', 0))
-
-                 GL.glDrawElements(GL.GL_TRIANGLES, len(self.q_indices), GL.GL_UNSIGNED_INT, None)
-
-
+        self.renderer.draw_frame((fb_w, fb_h), self.scene, self.sphere_mesh, self.quad_mesh, self.grid, self.lenses)
         glfw.swap_buffers(self.window)
 
     def save_config(self):

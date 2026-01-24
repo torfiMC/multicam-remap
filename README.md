@@ -1,182 +1,84 @@
 # Multicam Remap Viewer
 
-A high-performance Python OpenGL viewer for fusing multiple camera streams into one world view. Supports regular webcams and dual-lens fisheye cameras. It remaps raw fisheye video feeds into a sphere around a virtual camera in real-time using cached UV lookup textures. 
+Python + OpenGL viewer that fuses multiple camera feeds (single or dual fisheye) onto an inside-out sphere in real time. Lookups and edge masks are cached so remapping stays GPU-bound and low-latency.
 
-## Written by Torfi Frans Olafsson
-
-I have a background in games graphics programming and am an FPV drone hobbyist. Recently I have been putting multiple cameras on my drones using hardware switches to flip between them. However, I have wanted to be able to see the feed from many of them at the same time, but in a way that isn't confusing. So, I thought it could be cool to take their feed and fuse it like many VR and 360 cameras do, building a full spherical vision field around a virtual camera and output that to the video transmitter. This does introduce latency and is not suited for aggressive acrobatic flight, but for slower platforms, it can work.
-
-Transforming lens data using OpenCV and the CPU is very slow, but graphics hardware is perfect for it. I decided to pre-compute the lens distortion correction into a lookup table for every pixel, which could be run on a fragment shader. The computation results in a texture that is never shown, but contains two 16-bit channels, which represent the remapped U and V coordinates for each pixel.
-
-## Purpose
-
-This application is being built with the aim of running on a Raspberry Pi 5 mounted on a mobile platform, such as a drone or rover. It is designed to take input from multiple cameras and transmit a single fused video stream back to the operator.
-
-## Future Plans
-- **Mobile Platform Camera Fusion**: The goal is for a remote operator to have a single fused view of their surroundings. The operator can then orient the virtual camera via mapped channels on their remote, or other commands, providing a virtual gimbal using multiple fixed cameras. This eliminates the need for gimbal motors or servos, resulting in a more rigid mobile platform with fewer moving parts.
-
-- **Real-time Stabilization**: An aspirational goal is to connect an IMU to the Raspberry Pi and perform real-time stabilization on the feed, shifting the virtual camera to accommodate for movement of the camera platform. This will likely require its own IMU rather than piggybacking on a flight controller, due to latency and bandwidth issues.
-
-- **Pi Camera Support**: Currently, the system uses USB cameras with MJPG compressed feeds, but USB bandwidth saturates quickly when running multiple inputs. Using the two MIPI CSI/DSI ports for cameras would significantly reduce the load on the USB bus.
-
-
-
-## Features
-
-- **High-Quality Remapping**: Uses 32-bit floating point UV lookups (RG16F) for smooth linear interpolation and precise unwarping.
-- **Hardware Acceleration**: OpenGL-based rendering pipeline handles the heavy lifting of mapping fisheye textures onto a virtual sphere.
-- **Dual-Lens Support**: Designed for side-by-side dual fisheye streams (e.g., 2560x720 split into two 1280x720 views).
-- **Lookup + Mask Caching**: Caches lookup tables as `.npy` and edge masks as `.png` (controllable via `cache_lookup`). Cache filenames are prefixed with the camera `name`.
-- **Soft Border Blending (Optional)**: When `softborder: true`, a generated edge-distance mask is used as per-fragment alpha to blend lenses smoothly. When `false`, the fast discard-only path is used.
-- **Resilient Startup**: If a camera fails to open, it is reported and skipped instead of crashing the whole app.
-- **Cross-Platform**:
-    - **Windows**: Optimized for DirectShow (`cv2.CAP_DSHOW`) to enforce MJPG codec for high-bandwidth USB streaming.
-    - **Raspberry Pi 5**: Supports standard V4L2 capture (`cv2.CAP_ANY` or `cv2.CAP_V4L2`), verified with libcamera hardware.
-- **Interactive View**:
-    - **Mouse Drag**: Pan (Yaw) and Tilt (Pitch).
-    - **Scroll**: Zoom (Field of View).
-    - **Keys**: Q to Roll, R to Reset view, V for modes, E for Edit Mode, ESC to quit.
+## Current Capabilities
+- Multi-camera fusion with per-lens yaw/pitch/roll/orientation and edit-at-runtime controls.
+- Distortion models: `fisheye` (equidistant, default) and `corrected` (rectilinear pinhole) per camera.
+- Cached resources: float UV lookups (`.npy`) and optional edge masks (`.png`), keyed by camera name, FOV, projection FOV, and distortion model.
+- Soft border blending: optional alpha masks for smooth seams; fast discard path when disabled.
+- Render modes: inside-sphere view, manual orbit view with grid overlay, and equirect debug view.
+- Render modes: inside-sphere view, manual orbit view with grid overlay, equirect debug view, and an "All" grid that shows raw camera feeds.
+- Robust startup: cameras that fail to open are skipped with warnings; remaining cameras continue.
+- Cross-platform capture: DirectShow MJPG forcing on Windows, V4L2/libcamera/GStreamer on Linux/RPi, plus file playback.
 
 ## How It Works
+1) **Capture**: OpenCV grabs frames (forcing MJPG on DirectShow when possible) and uploads BGR data directly to an OpenGL texture. Capture runs on a background thread per device.
+2) **Lookup + Mask Generation**: CPU builds analytic remap textures from equirect to lens space. Distortion type controls projection math. Optional supersampled edge mask encodes distance to valid region for alpha blending.
+3) **Rendering**: A float lookup texture is sampled in the fragment shader to fetch from the source frame. Lenses are drawn back-to-front with optional blending. Orbit mode renders a ground grid first and draws the sphere with depth writes but no depth test for clean layering.
 
-1.  **Video Capture**:
-    -   Connects to the camera using OpenCV.
-    -   **Windows**: Uses a specialized construction method to force **MJPG** compression *before* the stream opens. This is crucial for obtaining 30fps at high resolutions (e.g., 2560x720) over USB, preventing fallback to uncompressed YUY2 (which caps at ~5-10fps).
-    -   **Linux/RPi**: Uses standard V4L2 backend.
+## Configuration
 
-2.  **Lookup Generation**:
-    -   Calculates a mapping from the output equirectangular pixel coordinates back to the input fisheye coordinates.
-    -   **Float Mode**: Creates a high-precision (H, W, 2) RGFloat16 OpenGL texture where channel R is U and G is V. This allows the GPU to linearly interpolate coordinates for the smoothest image.
-
-2b. **Edge Mask Generation (Optional)**:
-    -   Generates an 8-bit grayscale PNG mask aligned to the equirectangular output.
-    -   The mask is computed from the same analytic projection math as the lookup (and supersampled internally) to avoid jagged edges.
-    -   When `softborder: true`, the mask is sampled in the fragment shader as alpha and blended onto the framebuffer.
-
-3.  **Rendering**:
-    -   The script creates an "inside-out" sphere mesh.
-    -   A specialized Fragment Shader samples the Lookup Texture to find which pixel of the raw camera frame to display.
-    -   Multiple cameras can be composited into the same sphere view.
-
-## Usage
-
-### 1. Dependencies
-Install the required Python packages:
-
-```bash
-pip install -r requirements.txt
+### `config.yaml` (optional, viewer defaults)
+```yaml
+softborder: false   # true enables alpha blending with edge masks
+cache_lookup: true  # reuse lookup/mask caches; false regenerates every run
+maskblur: 0         # Gaussian blur kernel for mask (0/1 = none, 3+ softens)
+view:
+  yaw: 0.0
+  pitch: 0.0
+  roll: 0.0
+  fov: 70.0
+mesh:
+  sphere_lat_steps: 96
+  sphere_lon_steps: 192
+  sphere_radius: 10.0
 ```
 
-You will need `opencv-python`, `numpy`, `glfw`, `PyOpenGL`, `pyyaml`, and `pillow`.
-
-**Windows Note:** `ffmpeg` is optional. The app can use it for DirectShow capability probing only if you explicitly enable it per-camera (see `dshow_query_options`).
-
-### 2. Configuration (`cameras.yaml`)
-Create or edit `cameras.yaml` to define your camera setup. The application supports multiple cameras, including single fisheye lenses or dual-lens setups.
-
-### 2b. Viewer Startup Config (`config.yaml`)
-Optionally create `config.yaml` (next to `cameras.yaml`) to set the initial virtual camera orientation and FOV.
-
-Example `config.yaml`:
+### `cameras.yaml`
 ```yaml
-softborder: false  # true = alpha blend using edge mask; false = discard-only (faster)
-cache_lookup: true # true = reuse cached lookup/mask files; false = always regenerate
-maskblur: 0        # Gaussian blur kernel size for the mask PNG (0/1 = no blur; 3+ recommended)
-view:
+cameras:
+  - id: dshow:0            # dshow:N, v4l2:N, integer index, libcamera:N, or file path
+    enabled: true          # false skips initialization for this entry
+    name: Front Camera
+    resolution: [1280, 720]
+    type: single           # single | dual_left | dual_right
+    fov: 160.0             # lens HFOV in degrees
+    distortion: fisheye    # fisheye (default) or corrected (rectilinear)
+    mask_mindistance: 0.5  # 0=center ramp, 1=edge-only ramp (optional)
     yaw: 0.0
     pitch: 0.0
     roll: 0.0
-    fov: 70.0
+    orientation: 0.0       # sensor rotation (0/90/180/270)
+    # dshow_query_options: true   # optional ffmpeg probe (slow)
+    # dshow_device_name: "Exact DirectShow name"
 ```
 
-**Example `cameras.yaml`:**
-```yaml
-cameras:
-  - id: dshow:0          # Source ID (dshow:N, v4l2:N, integer index, or file path)
-    name: Front Camera   # Display name
-    resolution:          # Capture resolution [width, height]
-      - 1280
-      - 720
-    type: single         # 'single', 'dual_left', or 'dual_right'
-    fov: 160.0           # Lens Field of View in degrees
-    mask_mindistance: 0.5  # 0=center ramp, 1=edge-only ramp (optional)
-    # Optional Windows DirectShow debugging (slow):
-    # dshow_query_options: true
-    # dshow_device_name: "Exact DirectShow name for ffmpeg"
-    yaw: 0.0             # World Yaw (horizontal rotation)
-    pitch: 0.0           # World Pitch (vertical rotation)
-    roll: 0.0            # World Roll
-    orientation: 0.0     # Sensor rotation (0, 90, 180, 270)
-```
-
-**Field Key:**
-- `id`: The device source. 
-    - Windows DirectShow: `dshow:0`, `dshow:1` (Explicitly uses MJPG forcing logic).
-    - Windows/Linux Default: `0`, `1` (Uses `cv2.CAP_ANY`, less control over codec).
-    - Linux V4L2: `v4l2:0` (Explicit V4L2 backend).
-    - Raspberry Pi Libcamera: `libcamera:0` (Uses GStreamer `libcamerasrc` to access MIPI CSI cameras).
-    - File: Absolute or relative path to a video file.
-- `resolution`: The list `[width, height]` to request from the camera driver.
-- `type`:
-    - `single`: Uses the entire frame for the fisheye project.
-    - `dual_left`: Takes the left 50% of the frame (common for dual-lens cameras).
-    - `dual_right`: Takes the right 50% of the frame.
-- `fov`: The field of view of the lens itself.
-- `mask_mindistance`: Optional edge-mask ramp control for the lookup (0=center-to-edge ramp, 1=edge-only ramp).
-- `dshow_query_options`: (Windows, optional) Run an ffmpeg DirectShow capability probe at startup for this camera.
-- `dshow_device_name`: (Windows, optional) Device name string for ffmpeg when `dshow_query_options` is enabled.
-- `yaw`/`pitch`/`roll`: Position of the camera in the virtual world.
-- `orientation`: Rotation of the sensor image itself (0, 90, 180, 270).
-
-**Raspberry Pi Camera Note: (untested)**
-To use the native MIPI CSI ports on a Raspberry Pi (e.g., Pi Camera Module 3), use `id: libcamera:0`.
-*   **Requirements**: Your OpenCV installation must support GStreamer. The standard `python3-opencv` on Raspberry Pi OS usually works.
-*   **Multiple Cameras**: If you have two cameras connected, use `libcamera:0` and `libcamera:1`. The app attempts to automatically resolve the correct camera name.
-*   **Console**: You may need to have `rpicam-hello` or `libcamera-hello` installed for the app to detect camera names.
-
-### 3. Running
-Start the viewer:
-```bash
-python main.py --config cameras.yaml
-```
-
-**Fullscreen Mode (Raspberry Pi Console / Headless):**
-Use the `--fullscreen` flag. If running from a console without a desktop environment (e.g., Raspberry Pi Lite), you can use `startx` to launch a minimal X session:
-
-```bash
-# Install minimal X11 requirements
-sudo apt-get install xserver-xorg xinit
-
-# Run directly fullscreen
-startx python main.py --fullscreen --config cameras.yaml
-```
+**Field notes:**
+- `enabled: false` skips camera initialization while keeping the config entry around.
+- `distortion` omitted ⇒ fisheye. Use `corrected` for already-rectified lenses (pinhole projection).
+- `type` controls UV slice: `dual_left/right` take half the width of side-by-side stereo feeds.
+- `mask_mindistance` adjusts how far from the edge the alpha ramp starts when `softborder` is true.
 
 ## Controls
+- Mouse drag: Yaw/Pitch (orbit mode drags the outside camera instead).
+- Scroll: Zoom (FOV clamp 20–180).
+- R: Reset view. Q: Roll. V: Toggle inside ↔ equirect. S: Toggle orbit view. ESC: Quit.
+- F: Toggle All view (raw camera grid) on/off. R: Reset view. Q: Roll. V: Toggle inside ↔ equirect. S: Toggle orbit view. ESC: Quit.
+- Edit mode (E): C cycle camera, A cycle attribute (Yaw/Pitch/Roll/Orientation), +/- adjust (Shift for fine). Exiting edit saves back to `cameras.yaml`.
 
-### View Mode
-- **Mouse Drag**: Pan (Yaw) and Tilt (Pitch) the view.
-- **Scroll**: Zoom In/Out (Field of View).
-- **R**: Reset view to default.
-- **V**: Toggle viewing mode (Sphere vs Equirectangular/Debug).
-- **Q**: Roll view.
-- **E**: Enter Edit Mode.
-- **ESC**: Quit.
-
-### Edit Mode
-Press **E** to toggle Edit Mode. This allows you to calibrate camera positions in real-time. The console will display the currently selected camera and attribute.
-- **C**: Cycle through selected cameras (if multiple are defined).
-- **A**: Cycle through attributes to adjust (Yaw, Pitch, Roll, Orientation).
-- **+ / -**: Adjust the selected attribute.
-    - **Shift + (+/-)**: Fine adjustment (smaller steps).
-- **E**: Exit Edit Mode and **save changes** to `cameras.yaml` automatically.
+## Running
+```bash
+python main.py --config cameras.yaml        # windowed
+python main.py --config cameras.yaml --fullscreen
+```
 
 ## Troubleshooting
+- On Windows use `dshow:N` to force MJPG; YUY2 fallback will tank FPS at high resolutions.
+- Black or clipped image: check `fov` and `distortion`; overly small FOV or wrong model will discard pixels.
+- Missing cameras: failures are logged and skipped so the app can continue with remaining devices.
 
--   **Low FPS / YUY2 Codec**: On Windows, use `dshow:N` for the id in `cameras.yaml`. The viewer specifically attempts to force MJPG during initialization for `dshow` targets. If your camera falls back to YUY2 at high resolutions (like 2560x720), USB bandwidth limits will drop framerate to ~5fps.
--   **DirectShow Device Index**: If `dshow:0` is your webcam, your USB camera might be `dshow:1` or `dshow:2`. Use the `ffmpeg -list_options true -f dshow -i video="...` command or trial-and-error to find the right index.
--   **Black Screen**: Check if the `fov` in config matches your lens. If the lookup generation assumes a FOV larger than what the lens projects, pixels may be discarded.
--   **Some cameras missing**: If a device fails to open, the app logs a warning and skips it so the rest can still run.
-
-## Todo
-
--   **Raspberry Pi**: The project hasn't been fully tested on Raspberry Pi, so it is assumed that there is functionality still missing or broken.
+## Future Plans
+- IMU-driven stabilization and gimbal-less virtual camera control.
+- Broader Raspberry Pi testing and CSI/libcamera tuning.
+- Optional ffmpeg/recording pipeline.
