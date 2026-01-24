@@ -61,6 +61,23 @@ class ConnectionManager:
         return bool(self.active)
 
 
+class StreamManager(ConnectionManager):
+    async def broadcast_bytes(self, payload: bytes) -> None:
+        if not payload:
+            return
+        async with self._lock:
+            targets = list(self.active)
+        for ws in targets:
+            try:
+                await ws.send_bytes(payload)
+            except Exception:
+                try:
+                    await ws.close()
+                finally:
+                    async with self._lock:
+                        self.active.discard(ws)
+
+
 class ControlServer:
     def __init__(self, renderer_app, host: str = "0.0.0.0", port: int = 8000) -> None:
         self.renderer_app = renderer_app
@@ -70,6 +87,7 @@ class ControlServer:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._server: Optional[uvicorn.Server] = None
         self.manager = ConnectionManager()
+        self.stream_manager = StreamManager()
 
         self.fastapi_app = FastAPI(title="Multicam Control", version="0.1.0")
         self.fastapi_app.add_middleware(
@@ -143,6 +161,18 @@ class ControlServer:
             except Exception:
                 await self.manager.disconnect(websocket)
 
+        @self.fastapi_app.websocket("/ws/stream")
+        async def stream_endpoint(websocket: WebSocket):
+            await self.stream_manager.connect(websocket)
+            try:
+                await websocket.send_json({"type": "stream-ready"})
+                while True:
+                    await websocket.receive_text()
+            except WebSocketDisconnect:
+                await self.stream_manager.disconnect(websocket)
+            except Exception:
+                await self.stream_manager.disconnect(websocket)
+
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
@@ -175,6 +205,15 @@ class ControlServer:
         if self._loop and self._loop.is_running() and self.manager.has_clients():
             asyncio.run_coroutine_threadsafe(self.manager.broadcast(self._full_state()), self._loop)
 
+    def has_stream_clients(self) -> bool:
+        return self.stream_manager.has_clients()
+
+    def broadcast_frame(self, frame: bytes) -> None:
+        if not frame:
+            return
+        if self._loop and self._loop.is_running() and self.stream_manager.has_clients():
+            asyncio.run_coroutine_threadsafe(self.stream_manager.broadcast_bytes(frame), self._loop)
+
     def _html_page(self) -> str:
         return """<!DOCTYPE html>
 <html lang=\"en\">
@@ -185,7 +224,6 @@ class ControlServer:
   <link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">
   <link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>
   <link href=\"https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap\" rel=\"stylesheet\">
-    <button id="snapshotBtn" class="secondary">Snapshot</button>
   <style>
     :root {
       --bg: #0f172a;
@@ -235,6 +273,51 @@ class ControlServer:
       font-size: 0.9rem;
     }
     .pill strong { color: var(--text); }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+    .top-actions {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .stream-panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 0.85rem 1rem;
+      box-shadow: var(--shadow);
+      margin-bottom: 1rem;
+    }
+    .stream-body {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .stream-view {
+      width: 100%;
+      max-height: 420px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #0b1221;
+      object-fit: contain;
+      display: none;
+    }
+    .stream-pill {
+      background: rgba(52,211,153,0.12);
+      border-color: rgba(52,211,153,0.4);
+      color: #34d399;
+    }
+    .stream-pill[data-state="idle"] {
+      background: rgba(255,255,255,0.05);
+      border-color: var(--border);
+      color: var(--muted);
+    }
     #cams {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -315,16 +398,31 @@ class ControlServer:
 </head>
 <body>
   <header>
-    <div class=\"title\">Multicam Control Panel</div>
-    <div class=\"status\">
-      <div class=\"pill\">Mode: <strong id=\"mode\">--</strong></div>
-      <div class=\"pill\">Active: <strong id=\"active\">0</strong></div>
-      <div class=\"pill\">Configured: <strong id=\"configured\">0</strong></div>
+    <div class="title">Multicam Control Panel</div>
+    <div class="status">
+      <div class="pill">Mode: <strong id="mode">--</strong></div>
+      <div class="pill">Active: <strong id="active">0</strong></div>
+      <div class="pill">Configured: <strong id="configured">0</strong></div>
     </div>
   </header>
 
-  <div id=\"message\" class=\"error\"></div>
-  <div id=\"cams\"></div>
+  <div class="toolbar">
+    <div class="top-actions">
+      <button id="snapshotBtn" class="secondary">Snapshot</button>
+      <button id="streamBtn">Start Stream</button>
+    </div>
+    <div class="pill stream-pill" id="streamStatus" data-state="idle">Stream: Idle</div>
+  </div>
+
+  <div class="stream-panel">
+    <div class="stream-body">
+      <img id="streamView" class="stream-view" alt="Live stream preview" />
+      <div id="streamHint" class="muted">Start stream to preview the OpenGL output.</div>
+    </div>
+  </div>
+
+  <div id="message" class="error"></div>
+  <div id="cams"></div>
 
   <script>
     let cameras = [];
@@ -334,10 +432,21 @@ class ControlServer:
     const debounceTimers = {};
     let pingTimer = null;
     let snapshots = {};
+    let streamSocket = null;
+    let streamUrl = null;
 
     function statusText(label, value) {
       const el = document.getElementById(label);
       if (el) el.textContent = value;
+    }
+
+    function flashMessage(text) {
+      const msg = document.getElementById('message');
+      if (!msg) return;
+      msg.textContent = text || '';
+      if (text) {
+        setTimeout(() => { if (msg.textContent === text) msg.textContent = ''; }, 3000);
+      }
     }
 
     function render() {
@@ -450,9 +559,7 @@ class ControlServer:
         cameras = cameras.map(c => c.index === idx ? updated : c);
         render();
       } catch (err) {
-        const msg = document.getElementById('message');
-        msg.textContent = err.message || err;
-        setTimeout(() => msg.textContent = '', 3000);
+        flashMessage(err.message || err);
       }
     }
 
@@ -508,9 +615,7 @@ class ControlServer:
         view = await res.json();
         render();
       } catch (err) {
-        const msg = document.getElementById('message');
-        msg.textContent = err.message || err;
-        setTimeout(() => msg.textContent = '', 3000);
+        flashMessage(err.message || err);
       }
     }
 
@@ -525,9 +630,74 @@ class ControlServer:
         });
         render();
       } catch (e) {
-        const msg = document.getElementById('message');
-        msg.textContent = e.message || e;
-        setTimeout(() => msg.textContent = '', 3000);
+        flashMessage(e.message || e);
+      }
+    }
+
+    function setStreamState(active, label) {
+      const btn = document.getElementById('streamBtn');
+      const statusEl = document.getElementById('streamStatus');
+      const hint = document.getElementById('streamHint');
+      if (btn) btn.textContent = active ? 'Stop Stream' : 'Start Stream';
+      if (statusEl) {
+        statusEl.textContent = `Stream: ${label || (active ? 'Live' : 'Idle')}`;
+        statusEl.dataset.state = active ? 'live' : 'idle';
+      }
+      if (hint) {
+        hint.textContent = active ? 'Streaming renderer output...' : 'Start stream to preview the OpenGL output.';
+      }
+    }
+
+    function cleanupStream(reason) {
+      if (streamSocket) {
+        streamSocket.onopen = streamSocket.onmessage = streamSocket.onclose = streamSocket.onerror = null;
+        try { streamSocket.close(); } catch (e) { /* ignore */ }
+        streamSocket = null;
+      }
+      if (streamUrl) {
+        URL.revokeObjectURL(streamUrl);
+        streamUrl = null;
+      }
+      const viewEl = document.getElementById('streamView');
+      if (viewEl) {
+        viewEl.style.display = 'none';
+        viewEl.removeAttribute('src');
+      }
+      setStreamState(false, 'Idle');
+      if (reason) flashMessage(reason);
+    }
+
+    function startStream() {
+      if (streamSocket) return;
+      try {
+        const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/stream`;
+        streamSocket = new WebSocket(url);
+        streamSocket.binaryType = 'arraybuffer';
+        streamSocket.onopen = () => setStreamState(true, 'Live');
+        streamSocket.onmessage = evt => {
+          if (typeof evt.data === 'string') return;
+          const blob = evt.data instanceof Blob ? evt.data : new Blob([evt.data], { type: 'image/jpeg' });
+          const nextUrl = URL.createObjectURL(blob);
+          const viewEl = document.getElementById('streamView');
+          if (viewEl) {
+            viewEl.src = nextUrl;
+            viewEl.style.display = 'block';
+          }
+          if (streamUrl) URL.revokeObjectURL(streamUrl);
+          streamUrl = nextUrl;
+        };
+        streamSocket.onerror = () => cleanupStream('Stream connection error');
+        streamSocket.onclose = () => cleanupStream();
+      } catch (err) {
+        cleanupStream('Unable to start stream');
+      }
+    }
+
+    function toggleStream() {
+      if (streamSocket) {
+        cleanupStream();
+      } else {
+        startStream();
       }
     }
 
@@ -559,7 +729,12 @@ class ControlServer:
 
     fetchState();
     connectSocket();
-    document.getElementById('snapshotBtn').onclick = () => takeSnapshot();
+    setStreamState(false, 'Idle');
+    const snapBtn = document.getElementById('snapshotBtn');
+    if (snapBtn) snapBtn.onclick = () => takeSnapshot();
+    const streamBtn = document.getElementById('streamBtn');
+    if (streamBtn) streamBtn.onclick = () => toggleStream();
+    window.addEventListener('beforeunload', () => cleanupStream());
     wireViewInputs();
   </script>
 </body>

@@ -23,9 +23,24 @@ cameras:
   fov: 170.0
   yaw: 0.0
   pitch: 0.0
-  roll: -90.0
-  orientation: 0.0
+  roll: 0.0
+  orientation: -90.0
   mask_mindistance: 0.95
+  distortion: fisheye
+
+- id: dshow:3
+  enabled: true
+  name: Stereolens Left2
+  resolution:
+  - 2560
+  - 720
+  type: dual_right
+  fov: 170.0
+  yaw: 270.0
+  pitch: 0.0
+  roll: 0.0
+  orientation: -90.0
+  mask_mindistance: 0.9
   distortion: fisheye
 - id: dshow:2
   enabled: true
@@ -37,22 +52,8 @@ cameras:
   fov: 170.0
   yaw: 180.0
   pitch: 4.0
-  roll: 91.6
-  orientation: 0.0
-  mask_mindistance: 0.9
-  distortion: fisheye
-- id: dshow:3
-  enabled: true
-  name: Stereolens Left2
-  resolution:
-  - 2560
-  - 720
-  type: dual_right
-  fov: 170.0
-  yaw: 270.0
-  pitch: -0.0
-  roll: -90.0
-  orientation: 0.0
+  roll: 0.0
+  orientation: 91.0
   mask_mindistance: 0.9
   distortion: fisheye
 - id: dshow:3
@@ -65,7 +66,7 @@ cameras:
   fov: 170.0
   yaw: 90.0
   pitch: 0.0
-  roll: 90.0
-  orientation: 0.0
+  roll: 0.0
+  orientation: 90.0
   mask_mindistance: 0.9
   distortion: fisheye

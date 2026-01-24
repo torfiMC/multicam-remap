@@ -48,6 +48,7 @@ class Renderer:
             'a_uv': GL.glGetAttribLocation(self.raw_prog, "a_uv"),
             'u_mvp': GL.glGetUniformLocation(self.raw_prog, "u_mvp"),
             'u_src': GL.glGetUniformLocation(self.raw_prog, "u_src"),
+            'u_orientation_rad': GL.glGetUniformLocation(self.raw_prog, "u_orientation_rad"),
             'u_uv_offset_x': GL.glGetUniformLocation(self.raw_prog, "u_uv_offset_x"),
             'u_uv_scale_x': GL.glGetUniformLocation(self.raw_prog, "u_uv_scale_x"),
         }
@@ -213,6 +214,7 @@ class Renderer:
         GL.glUniform1i(self.raw_locs['u_src'], 0)
         GL.glUniform1f(self.raw_locs['u_uv_offset_x'], 0.0)
         GL.glUniform1f(self.raw_locs['u_uv_scale_x'], 1.0)
+        GL.glUniform1f(self.raw_locs['u_orientation_rad'], 0.0)
 
         mvp = np.eye(4, dtype=np.float32)
         GL.glUniformMatrix4fv(self.raw_locs['u_mvp'], 1, GL.GL_TRUE, mvp)
@@ -220,22 +222,27 @@ class Renderer:
         quad_mesh.bind(self.raw_locs['a_pos'], self.raw_locs['a_uv'])
 
         count = len(lenses)
-        cols = max(1, int(math.ceil(math.sqrt(count))))
-        rows = max(1, int(math.ceil(count / float(cols))))
+        cols = max(1, count)
+        rows = 1
 
         cell_w = max(1, fb_w // cols)
-        cell_h = max(1, fb_h // rows)
+        cell_h = max(1, fb_h)
 
         for idx, lens in enumerate(lenses):
             cam = lens.camera
-            cam_w = getattr(cam, 'actual_w', getattr(cam, 'width', 1))
-            cam_h = getattr(cam, 'actual_h', getattr(cam, 'height', 1))
+            cam_w = getattr(cam, 'actual_w', None) or getattr(cam, 'width', None) or 1
+            cam_h = getattr(cam, 'actual_h', None) or getattr(cam, 'height', None) or 1
             slice_scale = getattr(lens, 'uv_scale_x', 1.0) or 1.0
-            cam_w = max(1, int(round(cam_w * slice_scale)))
-            cam_aspect = cam_w / float(cam_h if cam_h else 1.0)
+            cam_w = max(1, int(round(float(cam_w) * slice_scale)))
+            cam_h = max(1, int(round(float(cam_h))))
+            cam_aspect = cam_h / float(cam_w)
 
             GL.glUniform1f(self.raw_locs['u_uv_offset_x'], getattr(lens, 'uv_offset_x', 0.0))
             GL.glUniform1f(self.raw_locs['u_uv_scale_x'], getattr(lens, 'uv_scale_x', 1.0))
+            GL.glUniform1f(
+                self.raw_locs['u_orientation_rad'],
+                math.radians(-1.0 * getattr(lens, 'orientation', 0.0)),
+            )
 
             row = idx // cols
             col = idx % cols

@@ -3,9 +3,12 @@ import queue
 import threading
 import concurrent.futures
 import base64
+import time
+import numpy as np
 import yaml
 import glfw
 import cv2
+from OpenGL import GL
 
 from src.capture import CameraDevice
 from src.lens import LensView
@@ -33,6 +36,10 @@ class App:
         self._task_queue = queue.Queue()
         self.state_version = 0
         self.control_server = None
+        self.stream_fps = 10.0
+        self.stream_quality = 80
+        self.stream_max_width = 1280
+        self._last_stream_time = 0.0
         self._load_config()
         self._init_window()
         self._init_devices()
@@ -575,7 +582,38 @@ class App:
     def _render(self):
         fb_w, fb_h = glfw.get_framebuffer_size(self.window)
         self.renderer.draw_frame((fb_w, fb_h), self.scene, self.sphere_mesh, self.quad_mesh, self.grid, self.lenses)
+        self._maybe_stream_frame(fb_w, fb_h)
         glfw.swap_buffers(self.window)
+
+    def _maybe_stream_frame(self, fb_w: int, fb_h: int) -> None:
+        if not self.control_server or not self.control_server.has_stream_clients():
+            return
+        if fb_w <= 0 or fb_h <= 0:
+            return
+
+        now = time.time()
+        min_interval = 1.0 / max(self.stream_fps, 0.1)
+        if (now - getattr(self, '_last_stream_time', 0.0)) < min_interval:
+            return
+
+        try:
+            raw = GL.glReadPixels(0, 0, fb_w, fb_h, GL.GL_RGB, GL.GL_UNSIGNED_BYTE)
+            frame = np.frombuffer(raw, dtype=np.uint8).reshape((fb_h, fb_w, 3))
+            frame = np.flipud(frame)
+            frame = frame[:, :, ::-1]
+
+            if self.stream_max_width and fb_w > self.stream_max_width:
+                scale = self.stream_max_width / float(fb_w)
+                new_h = max(1, int(fb_h * scale))
+                frame = cv2.resize(frame, (self.stream_max_width, new_h), interpolation=cv2.INTER_AREA)
+
+            quality = int(max(1, min(100, getattr(self, 'stream_quality', 80))))
+            ok, buf = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+            if ok:
+                self.control_server.broadcast_frame(buf.tobytes())
+                self._last_stream_time = now
+        except Exception as e:
+            print(f"[warn] Stream capture failed: {type(e).__name__}: {e}")
 
     def save_config(self):
         print(f"[edit] Saving configuration to {self.config_path}...")

@@ -63,12 +63,17 @@ FRAG_SRC_RAW = r"""
 uniform sampler2D u_src;
 uniform float u_uv_offset_x;
 uniform float u_uv_scale_x;
+uniform float u_orientation_rad;
 
 varying vec2 v_uv;
 
 void main() {
-    vec2 src_uv = v_uv;
-    src_uv.y = 1.0 - src_uv.y; // Flip V so text isn't mirrored vertically
+    vec2 src_uv = vec2(v_uv.x, 1.0 - v_uv.y);
+    vec2 centered = src_uv - vec2(0.5, 0.5);
+    float s = sin(u_orientation_rad);
+    float c = cos(u_orientation_rad);
+    vec2 rotated = vec2(centered.x * c - centered.y * s, centered.x * s + centered.y * c);
+    src_uv = rotated + vec2(0.5, 0.5);
     src_uv.x = src_uv.x * u_uv_scale_x + u_uv_offset_x;
     gl_FragColor = texture2D(u_src, src_uv);
 }
