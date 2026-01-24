@@ -171,8 +171,11 @@ class LensView:
         softborder: bool = False,
         cache_lookup: bool = True,
         maskblur: int = 0,
+        force_regen: bool = False,
     ):
         self.camera = camera
+        self.cache_lookup = bool(cache_lookup)
+        self.force_regen = bool(force_regen)
         
         # Config extraction
         self.fov = float(cam_config.get("fov", DEFAULT_FOV))
@@ -216,7 +219,7 @@ class LensView:
         # Using simple naming scheme based on properties to reuse cache
         cache_filename = f"{cam_name_prefix}_lookup_{lens_pixel_w}x{lens_pixel_h}_to_{self.out_w}x{self.out_h}_fov{self.fov}_pfov{PROJ_FOV}_dist{self.distortion}.npy"
 
-        should_use_cache = bool(cache_lookup)
+        should_use_cache = bool(cache_lookup) and (not self.force_regen)
         if should_use_cache and os.path.exists(cache_filename):
             try:
                 print(f"[lens] Loading cache {cache_filename}")
@@ -260,7 +263,7 @@ class LensView:
             mask_mindistance=self.mask_mindistance,
             distortion_type=self.distortion,
             maskblur=maskblur_i,
-            force_regen=(not bool(cache_lookup)),
+            force_regen=(not bool(cache_lookup)) or self.force_regen,
         )
 
         # Create GL Texture for Lookup
@@ -344,3 +347,19 @@ class LensView:
                 except Exception as e:
                     print(f"[warn] Failed to create fallback mask texture: {e}")
                     self.tex_mask = 0
+
+        def dispose(self):
+            """Release GL resources for this lens."""
+            try:
+                if getattr(self, "tex_lookup", 0):
+                    GL.glDeleteTextures(int(1), [self.tex_lookup])
+                    self.tex_lookup = 0
+            except Exception as e:
+                print(f"[warn] Failed to delete lookup texture: {e}")
+
+            try:
+                if getattr(self, "tex_mask", 0):
+                    GL.glDeleteTextures(int(1), [self.tex_mask])
+                    self.tex_mask = 0
+            except Exception as e:
+                print(f"[warn] Failed to delete mask texture: {e}")

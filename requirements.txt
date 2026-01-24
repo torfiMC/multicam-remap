@@ -5,3 +5,5 @@ PyOpenGL_accelerate
 glfw
 pillow
 PyYAML
+fastapi
+uvicorn[standard]
