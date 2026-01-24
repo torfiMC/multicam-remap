@@ -27,6 +27,9 @@ class ViewUpdate(BaseModel):
   pitch: Optional[float] = None
   roll: Optional[float] = None
   fov: Optional[float] = None
+  pano_yaw: Optional[float] = None
+  pano_pitch: Optional[float] = None
+  pano_zoom: Optional[float] = None
   reset: bool = False
 
 

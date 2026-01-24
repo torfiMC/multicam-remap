@@ -213,6 +213,8 @@ class LensView:
         # Calculate source slice dims for lookup gen
         lens_pixel_w = camera.actual_w // pixel_w_divisor
         lens_pixel_h = camera.actual_h
+        self.lens_pixel_w = lens_pixel_w
+        self.lens_pixel_h = lens_pixel_h
 
         cam_name_prefix = _sanitize_filename_component(cam_config.get("name", "camera"))
         
@@ -243,6 +245,18 @@ class LensView:
                 np.save(cache_filename, self.lookup_data)
             except Exception as e:
                 print(f"[warn] Failed to write lookup cache {cache_filename}: {e}")
+
+        # Precompute normalized focal scales for GPU analytic mapping (pano mode)
+        try:
+            f_pix = focal_length_pixels(self.distortion, float(lens_pixel_w), float(self.fov))
+            self.focal_scale_x = float(f_pix / float(lens_pixel_w))
+            self.focal_scale_y = float(f_pix / float(lens_pixel_h))
+        except Exception as e:
+            print(f"[warn] Failed to compute focal scales: {e}")
+            self.focal_scale_x = 1.0
+            self.focal_scale_y = 1.0
+
+        self.model_code = 0 if self.distortion == "fisheye" else 1
 
         # Generate an 8-bit grayscale mask PNG (if missing) that encodes normalized
         # distance-from-edge for the usable region of the lookup.
@@ -348,18 +362,18 @@ class LensView:
                     print(f"[warn] Failed to create fallback mask texture: {e}")
                     self.tex_mask = 0
 
-        def dispose(self):
-            """Release GL resources for this lens."""
-            try:
-                if getattr(self, "tex_lookup", 0):
-                    GL.glDeleteTextures(int(1), [self.tex_lookup])
-                    self.tex_lookup = 0
-            except Exception as e:
-                print(f"[warn] Failed to delete lookup texture: {e}")
+    def dispose(self):
+        """Release GL resources for this lens."""
+        try:
+            if getattr(self, "tex_lookup", 0):
+                GL.glDeleteTextures(int(1), [self.tex_lookup])
+                self.tex_lookup = 0
+        except Exception as e:
+            print(f"[warn] Failed to delete lookup texture: {e}")
 
-            try:
-                if getattr(self, "tex_mask", 0):
-                    GL.glDeleteTextures(int(1), [self.tex_mask])
-                    self.tex_mask = 0
-            except Exception as e:
-                print(f"[warn] Failed to delete mask texture: {e}")
+        try:
+            if getattr(self, "tex_mask", 0):
+                GL.glDeleteTextures(int(1), [self.tex_mask])
+                self.tex_mask = 0
+        except Exception as e:
+            print(f"[warn] Failed to delete mask texture: {e}")

@@ -20,6 +20,11 @@ SCROLL_SENSITIVITY = 2.0
 KEY_ADJUST_LARGE = 10.0
 KEY_ADJUST_SMALL = 1.0
 
+# Panorama (equirect pan/zoom) limits
+PANO_ZOOM_MIN = 1.0
+PANO_ZOOM_MAX = 6.0
+PANO_PITCH_LIMIT = 85.0
+
 # Edit Mode
 ATTR_NAMES = ["Yaw", "Pitch", "Roll", "Orientation"]
 

@@ -21,8 +21,17 @@ uniform sampler2D u_src;     // combined source frame (left|right)
 uniform sampler2D u_lookup;  // RGBA8 packed UV lookup (u16 in RG, v16 in BA)
 uniform float u_uv_offset_x; // U offset 
 uniform float u_uv_scale_x;  // U scale
+uniform float u_view_scale;  // >1 = zoom in (sample smaller portion)
+uniform vec2 u_view_offset;  // delta from center (0.5,0.5) in UV space
 
 varying vec2 v_uv;
+
+vec2 apply_view(vec2 uv) {
+    vec2 centered = (uv - vec2(0.5)) / max(u_view_scale, 1e-6) + vec2(0.5) + u_view_offset;
+    centered.x = centered.x - floor(centered.x); // wrap horizontally
+    centered.y = clamp(centered.y, 0.0, 1.0);
+    return centered;
+}
 
 vec2 unpack_uv_rgba8(vec4 t) {
     // t is 0..1; reconstruct u16/v16 from RG/BA bytes
@@ -38,7 +47,8 @@ vec2 unpack_uv_rgba8(vec4 t) {
 }
 
 void main() {
-    vec4 lu = texture2D(u_lookup, v_uv);
+    vec2 lookup_uv = apply_view(v_uv);
+    vec4 lu = texture2D(u_lookup, lookup_uv);
 
     // Invalid pixels: check if the lookup value is black (0,0,0,0)
     // We cannot use alpha alone because alpha contains part of the V coordinate.
@@ -85,12 +95,22 @@ uniform sampler2D u_src;     // combined source frame (left|right)
 uniform sampler2D u_lookup;  // RG16F float lookup (u in R, v in G)
 uniform float u_uv_offset_x; // U offset in source texture (e.g. 0.0 or 0.5)
 uniform float u_uv_scale_x;  // U scale in source texture (e.g. 0.5 or 1.0)
+uniform float u_view_scale;  // >1 = zoom in (sample smaller portion)
+uniform vec2 u_view_offset;  // delta from center (0.5,0.5) in UV space
 
 varying vec2 v_uv;
 
+vec2 apply_view(vec2 uv) {
+    vec2 centered = (uv - vec2(0.5)) / max(u_view_scale, 1e-6) + vec2(0.5) + u_view_offset;
+    centered.x = centered.x - floor(centered.x); // wrap horizontally for 360 pano
+    centered.y = clamp(centered.y, 0.0, 1.0);
+    return centered;
+}
+
 void main() {
+    vec2 lookup_uv = apply_view(v_uv);
     // Sample high-precision float texture directly
-    vec2 lu = texture2D(u_lookup, v_uv).rg;
+    vec2 lu = texture2D(u_lookup, lookup_uv).rg;
 
     // Check for sentinel value (e.g. negative) to indicate invalid mapping
     if (lu.x < -0.0001) {
@@ -113,11 +133,21 @@ uniform sampler2D u_lookup;  // RG16F float lookup (u in R, v in G)
 uniform sampler2D u_mask;    // L8/LUMINANCE mask, sampled in equirect space
 uniform float u_uv_offset_x; // U offset in source texture (e.g. 0.0 or 0.5)
 uniform float u_uv_scale_x;  // U scale in source texture (e.g. 0.5 or 1.0)
+uniform float u_view_scale;  // >1 = zoom in (sample smaller portion)
+uniform vec2 u_view_offset;  // delta from center (0.5,0.5) in UV space
 
 varying vec2 v_uv;
 
+vec2 apply_view(vec2 uv) {
+    vec2 centered = (uv - vec2(0.5)) / max(u_view_scale, 1e-6) + vec2(0.5) + u_view_offset;
+    centered.x = centered.x - floor(centered.x);
+    centered.y = clamp(centered.y, 0.0, 1.0);
+    return centered;
+}
+
 void main() {
-    vec2 lu = texture2D(u_lookup, v_uv).rg;
+    vec2 lookup_uv = apply_view(v_uv);
+    vec2 lu = texture2D(u_lookup, lookup_uv).rg;
 
     // Preserve the existing low-end validity check (sentinel) to avoid sampling
     // bogus UVs outside the usable area.
@@ -129,9 +159,80 @@ void main() {
     src_uv.x = src_uv.x * u_uv_scale_x + u_uv_offset_x;
 
     vec3 rgb = texture2D(u_src, src_uv).rgb;
-    float a = texture2D(u_mask, v_uv).r;
+    float a = texture2D(u_mask, lookup_uv).r;
 
     gl_FragColor = vec4(rgb, a);
+}
+"""
+
+FRAG_SRC_PANO = r"""
+#version 120
+uniform sampler2D u_src;          // camera frame
+uniform mat3 u_cam_rot;           // world->camera rotation
+uniform float u_focal_x;          // f_pix / width
+uniform float u_focal_y;          // f_pix / height
+uniform float u_uv_offset_x;      // slice offset for dual feeds
+uniform float u_uv_scale_x;       // slice scale for dual feeds
+uniform float u_view_scale;       // pano zoom
+uniform vec2 u_view_offset;       // pano pan offset
+uniform int u_model;              // 0=fisheye equidistant, 1=rectilinear
+
+varying vec2 v_uv;
+
+vec2 apply_view(vec2 uv) {
+    vec2 centered = (uv - vec2(0.5)) / max(u_view_scale, 1e-6) + vec2(0.5) + u_view_offset;
+    centered.x = centered.x - floor(centered.x); // wrap horizontally for 360
+    centered.y = clamp(centered.y, 0.0, 1.0);
+    return centered;
+}
+
+void main() {
+    vec2 uv = apply_view(v_uv);
+    float lon = (0.5 - uv.x) * 6.28318530718; // flip X so yaw aligns with sphere
+    float lat = (0.5 - uv.y) * 3.14159265359; // pi
+
+    float cl = cos(lat);
+    float sl = sin(lat);
+    float sx = sin(lon);
+    float cx = cos(lon);
+
+    vec3 d_world = vec3(cl * sx, sl, cl * cx);
+    vec3 d_cam = u_cam_rot * d_world;
+
+    // Mirror both X and Y in camera space (pano/equirect only).
+    d_cam.x = d_cam.x;
+    d_cam.y = -d_cam.y;
+
+    if (d_cam.z <= 0.0) {
+        discard;
+    }
+
+    float u_tex;
+    float v_tex;
+    if (u_model == 0) {
+        float theta = acos(clamp(d_cam.z, -1.0, 1.0));
+        float r_xy = length(d_cam.xy);
+        if (r_xy < 1e-8) {
+            u_tex = 0.5;
+            v_tex = 0.5;
+        } else {
+            float r = theta;
+            u_tex = 0.5 + u_focal_x * (r * d_cam.x / r_xy);
+            v_tex = 0.5 + u_focal_y * (r * d_cam.y / r_xy);
+        }
+    } else {
+        u_tex = 0.5 + u_focal_x * (d_cam.x / d_cam.z);
+        v_tex = 0.5 + u_focal_y * (d_cam.y / d_cam.z);
+    }
+
+    u_tex = u_tex * u_uv_scale_x + u_uv_offset_x;
+
+    if (u_tex < 0.0 || u_tex > 1.0 || v_tex < 0.0 || v_tex > 1.0) {
+        discard;
+    }
+
+    vec3 rgb = texture2D(u_src, vec2(u_tex, v_tex)).rgb;
+    gl_FragColor = vec4(rgb, 1.0);
 }
 """
 

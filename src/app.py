@@ -459,6 +459,9 @@ class App:
                 "pitch": float(getattr(scene, 'pitch', 0.0)),
                 "roll": float(getattr(scene, 'roll', 0.0)),
                 "fov": float(getattr(scene, 'fov', self.default_fov)),
+                "pano_yaw": float(getattr(scene, 'pano_yaw', 0.0)),
+                "pano_pitch": float(getattr(scene, 'pano_pitch', 0.0)),
+                "pano_zoom": float(getattr(scene, 'pano_zoom', 1.0)),
                 "view_mode": getattr(scene, 'view_mode', 'inside'),
                 "state_version": self.state_version,
             }
@@ -478,6 +481,14 @@ class App:
                 if key in updates and updates[key] is not None:
                     setattr(scene, key, float(updates[key]))
                     changed = True
+
+            for key in ("pano_yaw", "pano_pitch", "pano_zoom"):
+                if key in updates and updates[key] is not None:
+                    setattr(scene, key, float(updates[key]))
+                    changed = True
+
+            if changed:
+                scene.clamp_pano()
 
             if changed:
                 self.state_version += 1

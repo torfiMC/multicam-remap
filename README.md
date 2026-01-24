@@ -3,12 +3,12 @@
 Python + OpenGL viewer that fuses multiple camera feeds (single or dual fisheye) onto an inside-out sphere in real time. Lookups and edge masks are cached so remapping stays GPU-bound and low-latency.
 
 ## Current Capabilities
-- Multi-camera fusion with per-lens yaw/pitch/roll/orientation and edit-at-runtime controls.
+- Multi-camera fusion with per-lens yaw/pitch/roll/orientation and live edit controls.
 - Distortion models: `fisheye` (equidistant, default) and `corrected` (rectilinear pinhole) per camera.
 - Cached resources: float UV lookups (`.npy`) and optional edge masks (`.png`), keyed by camera name, FOV, projection FOV, and distortion model.
 - Soft border blending: optional alpha masks for smooth seams; fast discard path when disabled.
-- Render modes: inside-sphere view, manual orbit view with grid overlay, and equirect debug view.
-- Render modes: inside-sphere view, manual orbit view with grid overlay, equirect debug view, and an "All" grid that shows raw camera feeds.
+- Render modes: inside-sphere view, orbit view with grid overlay, full-width equirect view, square pano view with pan/zoom, and "All" grid of raw feeds.
+- Panorama/equirect modes use the analytic projector that honors per-lens yaw/pitch/roll/orientation and slice offsets (dual_left/dual_right).
 - Robust startup: cameras that fail to open are skipped with warnings; remaining cameras continue.
 - Cross-platform capture: DirectShow MJPG forcing on Windows, V4L2/libcamera/GStreamer on Linux/RPi, plus file playback.
 
@@ -63,8 +63,10 @@ cameras:
 ## Controls
 - Mouse drag: Yaw/Pitch (orbit mode drags the outside camera instead).
 - Scroll: Zoom (FOV clamp 20–180).
-- R: Reset view. Q: Roll. V: Toggle inside ↔ equirect. S: Toggle orbit view. ESC: Quit.
-- F: Toggle All view (raw camera grid) on/off. R: Reset view. Q: Roll. V: Toggle inside ↔ equirect. S: Toggle orbit view. ESC: Quit.
+- V: Toggle full equirect pano view ↔ inside view.
+- P: Toggle centered square pano view; drag to pan, scroll to zoom.
+- S: Toggle orbit view with ground grid; ESC to quit.
+- F: Toggle All view (raw camera grid); R: Reset; Q: Roll.
 - Edit mode (E): C cycle camera, A cycle attribute (Yaw/Pitch/Roll/Orientation), +/- adjust (Shift for fine). Exiting edit saves back to `cameras.yaml`.
 
 ## Running

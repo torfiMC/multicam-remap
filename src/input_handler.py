@@ -1,6 +1,15 @@
 
 import glfw
-from src.constants import ATTR_NAMES, KEY_ADJUST_LARGE, KEY_ADJUST_SMALL, MOUSE_SENSITIVITY, SCROLL_SENSITIVITY
+from src.constants import (
+    ATTR_NAMES,
+    KEY_ADJUST_LARGE,
+    KEY_ADJUST_SMALL,
+    MOUSE_SENSITIVITY,
+    SCROLL_SENSITIVITY,
+    PANO_PITCH_LIMIT,
+    PANO_ZOOM_MAX,
+    PANO_ZOOM_MIN,
+)
 
 class InputHandler:
     def __init__(self, app):
@@ -79,6 +88,13 @@ class InputHandler:
             target_mode = 'equirect' if scene.view_mode != 'equirect' else 'inside'
             self.app.set_view_mode(target_mode)
             print(f"[view] Mode: {self._mode_label()}")
+        elif key == glfw.KEY_P:
+            if scene.view_mode == 'pano':
+                self.app.set_view_mode(scene.prev_view_mode or 'inside')
+            else:
+                scene.prev_view_mode = scene.view_mode
+                self.app.set_view_mode('pano')
+            print(f"[view] Mode: {self._mode_label()}")
         elif key == glfw.KEY_S:
             if scene.view_mode == 'orbit':
                 self.app.set_view_mode(scene.prev_view_mode or 'inside')
@@ -115,6 +131,10 @@ class InputHandler:
         if mode == 'orbit':
             scene.orbit_angle_offset -= dx * MOUSE_SENSITIVITY
             scene.orbit_pitch = max(-80.0, min(80.0, scene.orbit_pitch + dy * MOUSE_SENSITIVITY))
+        elif mode == 'pano':
+            scene.pano_yaw += dx * MOUSE_SENSITIVITY
+            scene.pano_pitch = max(-PANO_PITCH_LIMIT, min(PANO_PITCH_LIMIT, scene.pano_pitch + dy * MOUSE_SENSITIVITY))
+            scene.clamp_pano()
         else:
             scene.yaw += dx * MOUSE_SENSITIVITY
             scene.pitch += dy * MOUSE_SENSITIVITY
@@ -124,8 +144,13 @@ class InputHandler:
         scene = getattr(self.app, 'scene', None)
         if not scene:
             return
-        scene.fov -= yoff * SCROLL_SENSITIVITY
-        scene.fov = max(20.0, min(180.0, scene.fov))
+        if scene.view_mode == 'pano':
+            zoom = scene.pano_zoom * (1.0 + yoff * 0.12)
+            scene.pano_zoom = max(PANO_ZOOM_MIN, min(PANO_ZOOM_MAX, zoom))
+            scene.clamp_pano()
+        else:
+            scene.fov -= yoff * SCROLL_SENSITIVITY
+            scene.fov = max(20.0, min(180.0, scene.fov))
 
     def _mode_label(self) -> str:
         scene = getattr(self.app, 'scene', None)
@@ -134,6 +159,8 @@ class InputHandler:
         mode = scene.view_mode
         if mode == 'equirect':
             return 'Equirect'
+        if mode == 'pano':
+            return 'Panorama (square)'
         if mode == 'orbit':
             return 'Sphere (orbit)'
         if mode == 'all':

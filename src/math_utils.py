@@ -84,6 +84,37 @@ def mat4_from_yaw_pitch_roll_turret(yaw_deg: float, pitch_deg: float, roll_deg: 
     return Ry @ Rx @ Rz
 
 
+def mat3_from_yaw_pitch_roll_turret(yaw_deg: float, pitch_deg: float, roll_deg: float) -> np.ndarray:
+    """3x3 variant of the turret rotation (yaw->pitch->roll)."""
+    yaw = math.radians(yaw_deg)
+    pitch = math.radians(pitch_deg)
+    roll = math.radians(roll_deg)
+
+    cy, sy = math.cos(yaw), math.sin(yaw)
+    cp, sp = math.cos(pitch), math.sin(pitch)
+    cr, sr = math.cos(roll), math.sin(roll)
+
+    Ry = np.array([
+        [ cy, 0.0, sy],
+        [0.0, 1.0, 0.0],
+        [-sy, 0.0, cy],
+    ], dtype=np.float32)
+
+    Rx = np.array([
+        [1.0, 0.0, 0.0],
+        [0.0,  cp, -sp],
+        [0.0,  sp,  cp],
+    ], dtype=np.float32)
+
+    Rz = np.array([
+        [ cr, -sr, 0.0],
+        [ sr,  cr, 0.0],
+        [0.0, 0.0, 1.0],
+    ], dtype=np.float32)
+
+    return Ry @ Rx @ Rz
+
+
 def mat4_look_at(eye: np.ndarray, target: np.ndarray, up: np.ndarray) -> np.ndarray:
     # Right-handed look-at matrix matching OpenGL-style view transforms.
     f = target - eye
