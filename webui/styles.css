@@ -1,0 +1,184 @@
+:root {
+  --bg: #0f172a;
+  --panel: #111827;
+  --accent: #0ea5e9;
+  --accent-2: #f59e0b;
+  --text: #e5e7eb;
+  --muted: #9ca3af;
+  --border: #1f2937;
+  --shadow: 0 10px 35px rgba(0,0,0,0.35);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: 'Space Grotesk', 'Segoe UI', sans-serif;
+  background: radial-gradient(circle at 20% 20%, rgba(14,165,233,0.15), transparent 25%),
+              radial-gradient(circle at 80% 0%, rgba(245,158,11,0.15), transparent 20%),
+              var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  padding: 1rem;
+}
+header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+.title {
+  font-size: 1.4rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.status {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.pill {
+  padding: 0.4rem 0.75rem;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.pill strong { color: var(--text); }
+.pill-wrap { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: flex-end; }
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.top-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.stream-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 0.85rem 1rem;
+  box-shadow: var(--shadow);
+  margin-bottom: 1rem;
+}
+.stream-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.stream-view {
+  width: 100%;
+  max-height: 420px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #0b1221;
+  object-fit: contain;
+  display: none;
+}
+.stream-pill {
+  background: rgba(52,211,153,0.12);
+  border-color: rgba(52,211,153,0.4);
+  color: #34d399;
+}
+.stream-pill[data-state="idle"] {
+  background: rgba(255,255,255,0.05);
+  border-color: var(--border);
+  color: var(--muted);
+}
+.record-pill {
+  background: rgba(239,68,68,0.12);
+  border-color: rgba(239,68,68,0.4);
+  color: #f87171;
+}
+.record-pill[data-state="idle"] {
+  background: rgba(255,255,255,0.05);
+  border-color: var(--border);
+  color: var(--muted);
+}
+#cams {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1rem;
+}
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1rem;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.card h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.badge {
+  background: rgba(14,165,233,0.1);
+  color: var(--text);
+  padding: 0.2rem 0.6rem;
+  border-radius: 10px;
+  border: 1px solid rgba(14,165,233,0.4);
+  font-size: 0.8rem;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+label { font-size: 0.85rem; color: var(--muted); }
+input[type=number] {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #0b1221;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+.row { display: flex; align-items: center; gap: 0.5rem; justify-content: space-between; }
+.toggle { width: 20px; height: 20px; }
+.actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+button {
+  border: none;
+  border-radius: 10px;
+  padding: 0.55rem 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--text);
+  background: var(--accent);
+  box-shadow: 0 6px 20px rgba(14,165,233,0.35);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+button.secondary {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border);
+  box-shadow: none;
+}
+button.danger {
+  background: #ef4444;
+  box-shadow: 0 6px 20px rgba(239,68,68,0.35);
+}
+button:active { transform: translateY(1px); }
+.muted { color: var(--muted); font-size: 0.85rem; }
+.error { color: #f87171; font-size: 0.9rem; }
+.snap {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #0b1221;
+  object-fit: contain;
+  max-height: 220px;
+}

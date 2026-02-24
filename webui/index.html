@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Multicam Control</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header>
+    <div class="title">Multicam Control Panel</div>
+    <div class="status">
+      <div class="pill">Mode: <strong id="mode">--</strong></div>
+      <div class="pill">Active: <strong id="active">0</strong></div>
+      <div class="pill">Configured: <strong id="configured">0</strong></div>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <div class="top-actions">
+      <button id="snapshotBtn" class="secondary">Snapshot</button>
+      <button id="streamBtn">Start Stream</button>
+      <button id="recordBtn" class="danger">Start Recording</button>
+    </div>
+    <div class="pill-wrap">
+      <div class="pill stream-pill" id="streamStatus" data-state="idle">Stream: Idle</div>
+      <div class="pill record-pill" id="recordStatus" data-state="idle">Record: Idle</div>
+    </div>
+  </div>
+
+  <div class="stream-panel">
+    <div class="stream-body">
+      <img id="streamView" class="stream-view" alt="Live stream preview" />
+      <div id="streamHint" class="muted">Start stream to preview the OpenGL output.</div>
+    </div>
+  </div>
+
+  <div id="message" class="error"></div>
+  <div id="cams"></div>
+
+  <script>
+    let cameras = [];
+    let status = {};
+    let view = {};
+    let record = {};
+    let ws;
+    const debounceTimers = {};
+    let pingTimer = null;
+    let snapshots = {};
+    let streamSocket = null;
+    let streamUrl = null;
+
+    function statusText(label, value) {
+      const el = document.getElementById(label);
+      if (el) el.textContent = value;
+    }
+
+    function flashMessage(text) {
+      const msg = document.getElementById('message');
+      if (!msg) return;
+      msg.textContent = text || '';
+      if (text) {
+        setTimeout(() => { if (msg.textContent === text) msg.textContent = ''; }, 3000);
+      }
+    }
+
+    function render() {
+      statusText('mode', status.view_mode || 'inside');
+      statusText('active', status.active_cameras || 0);
+      statusText('configured', status.configured_cameras || 0);
+      record = status.record || record || {};
+      updateViewUI();
+      updateRecordUI();
+      const wrap = document.getElementById('cams');
+      wrap.innerHTML = cameras.map(cam => {
+        const res = cam.actual_resolution && cam.actual_resolution[0] ? `${cam.actual_resolution[0]}x${cam.actual_resolution[1]}` : (cam.resolution || []).join('x') || '—';
+        const active = cam.active ? 'Live' : 'Inactive';
+        const badgeColor = cam.active ? 'var(--accent)' : 'var(--accent-2)';
+        const snap = snapshots[cam.index];
+        return `
+          <div class="card" data-cam="${cam.index}" data-fov="${cam.fov}">
+            <h3>
+              <span>${cam.name}</span>
+              <span class="badge" style="border-color:${badgeColor}; color:${badgeColor}">${active}</span>
+            </h3>
+            <div class="muted">${cam.id} · ${cam.type} · ${res}</div>
+            ${snap ? `<img class="snap" src="${snap}" alt="snapshot" />` : ''}
+            <div class="row">
+              <label>Enabled</label>
+              <input class="toggle" type="checkbox" ${cam.enabled ? 'checked' : ''} onchange="applyCamera(${cam.index}, false)" />
+            </div>
+            <div class="grid">
+              <div><label>Yaw</label><input class="cam-input" type="number" step="0.1" value="${cam.yaw}" /></div>
+              <div><label>Pitch</label><input class="cam-input" type="number" step="0.1" value="${cam.pitch}" /></div>
+              <div><label>Roll</label><input class="cam-input" type="number" step="0.1" value="${cam.roll}" /></div>
+              <div><label>Orientation</label><input class="cam-input" type="number" step="0.1" value="${cam.orientation}" /></div>
+              <div><label>FOV</label><input class="cam-input" type="number" step="0.5" value="${cam.fov}" /></div>
+              <div><label>Mask Edge</label><input class="cam-input" type="number" step="0.05" min="0" max="1" value="${cam.mask_mindistance}" /></div>
+            </div>
+            <div class="actions">
+              <button onclick="applyCamera(${cam.index}, false)">Save</button>
+              <button class="secondary" onclick="applyCamera(${cam.index}, true)">Rebuild Map</button>
+            </div>
+          </div>`;
+      }).join('');
+
+      wireInputs();
+    }
+
+    function updateViewUI() {
+      const yaw = document.getElementById('viewYaw');
+      const pitch = document.getElementById('viewPitch');
+      const roll = document.getElementById('viewRoll');
+      const fov = document.getElementById('viewFov');
+      if (yaw) yaw.value = view.yaw ?? 0;
+      if (pitch) pitch.value = view.pitch ?? 0;
+      if (roll) roll.value = view.roll ?? 0;
+      if (fov) fov.value = view.fov ?? 70;
+    }
+
+    function updateRecordUI() {
+      const rec = record || {};
+      const active = !!rec.enabled;
+      const live = !!rec.active;
+      const btn = document.getElementById('recordBtn');
+      const statusEl = document.getElementById('recordStatus');
+      const label = active ? (live ? 'Recording' : 'Armed') : 'Idle';
+      const target = rec.path ? `${label} → ${rec.path}` : `Record: ${label}`;
+      if (btn) {
+        btn.textContent = active ? 'Stop Recording' : 'Start Recording';
+      }
+      if (statusEl) {
+        statusEl.textContent = rec.path ? `Record: ${label} (${rec.path})` : `Record: ${label}`;
+        statusEl.dataset.state = active ? 'live' : 'idle';
+      }
+    }
+
+    function collectPayload(card) {
+      const nums = [...card.querySelectorAll('input[type=number]')].map(inp => parseFloat(inp.value));
+      const [yaw, pitch, roll, orientation, fov, mask] = nums;
+      return {
+        enabled: card.querySelector('.toggle').checked,
+        yaw, pitch, roll, orientation, fov, mask_mindistance: mask,
+      };
+    }
+
+    function wireInputs() {
+      const wrap = document.getElementById('cams');
+      if (!wrap) return;
+
+      wrap.querySelectorAll('.toggle').forEach(toggle => {
+        toggle.onchange = () => {
+          const card = toggle.closest('.card');
+          if (!card) return;
+          const idx = parseInt(card.dataset.cam, 10);
+          scheduleApply(idx, false, 0);
+        };
+      });
+
+      wrap.querySelectorAll('.cam-input').forEach(inp => {
+        inp.oninput = () => {
+          const card = inp.closest('.card');
+          if (!card) return;
+          const idx = parseInt(card.dataset.cam, 10);
+          scheduleApply(idx, false, 200);
+        };
+      });
+    }
+
+    function scheduleApply(idx, forceRebuild, delayMs) {
+      clearTimeout(debounceTimers[idx]);
+      debounceTimers[idx] = setTimeout(() => applyCamera(idx, forceRebuild), delayMs);
+    }
+
+    async function applyCamera(idx, forceRebuild) {
+      const card = document.querySelector(`[data-cam="${idx}"]`);
+      if (!card) return;
+      const payload = collectPayload(card);
+      const prevFov = parseFloat(card.dataset.fov || payload.fov);
+      payload.rebuild_lookup = forceRebuild || Math.abs(prevFov - payload.fov) > 1e-3;
+      payload.save = true;
+      try {
+        const res = await fetch(`/api/cameras/${idx}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+          const detail = await res.json().catch(() => ({}));
+          throw new Error(detail.detail || 'Update failed');
+        }
+        const updated = await res.json();
+        cameras = cameras.map(c => c.index === idx ? updated : c);
+        render();
+      } catch (err) {
+        flashMessage(err.message || err);
+      }
+    }
+
+    async function fetchState() {
+      const [cRes, sRes, vRes] = await Promise.all([
+        fetch('/api/cameras'),
+        fetch('/api/status'),
+        fetch('/api/view'),
+      ]);
+      const [cData, sData, vData] = await Promise.all([cRes.json(), sRes.json(), vRes.json()]);
+      cameras = cData;
+      status = sData;
+      record = status.record || record || {};
+      view = vData;
+      render();
+    }
+
+    function wireViewInputs() {
+      const fields = ['viewYaw','viewPitch','viewRoll','viewFov'];
+      fields.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.oninput = () => scheduleViewApply(200);
+      });
+      const resetBtn = document.getElementById('resetView');
+      if (resetBtn) resetBtn.onclick = () => applyView(true);
+    }
+
+    function collectViewPayload() {
+      const yaw = parseFloat(document.getElementById('viewYaw')?.value || '0');
+      const pitch = parseFloat(document.getElementById('viewPitch')?.value || '0');
+      const roll = parseFloat(document.getElementById('viewRoll')?.value || '0');
+      const fov = parseFloat(document.getElementById('viewFov')?.value || '70');
+      return { yaw, pitch, roll, fov };
+    }
+
+    function scheduleViewApply(delayMs) {
+      clearTimeout(debounceTimers['view']);
+      debounceTimers['view'] = setTimeout(() => applyView(false), delayMs);
+    }
+
+    async function applyView(reset) {
+      const payload = reset ? { reset: true } : collectViewPayload();
+      try {
+        const res = await fetch('/api/view', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+          const detail = await res.json().catch(() => ({}));
+          throw new Error(detail.detail || 'Update failed');
+        }
+        view = await res.json();
+        render();
+      } catch (err) {
+        flashMessage(err.message || err);
+      }
+    }
+
+    async function takeSnapshot() {
+      try {
+        const res = await fetch('/api/snapshot');
+        if (!res.ok) throw new Error('Snapshot failed');
+        const data = await res.json();
+        snapshots = {};
+        (data.snapshots || []).forEach(s => {
+          snapshots[s.index] = s.image;
+        });
+        render();
+      } catch (e) {
+        flashMessage(e.message || e);
+      }
+    }
+
+    function setStreamState(active, label) {
+      const btn = document.getElementById('streamBtn');
+      const statusEl = document.getElementById('streamStatus');
+      const hint = document.getElementById('streamHint');
+      if (btn) btn.textContent = active ? 'Stop Stream' : 'Start Stream';
+      if (statusEl) {
+        statusEl.textContent = `Stream: ${label || (active ? 'Live' : 'Idle')}`;
+        statusEl.dataset.state = active ? 'live' : 'idle';
+      }
+      if (hint) {
+        hint.textContent = active ? 'Streaming renderer output...' : 'Start stream to preview the OpenGL output.';
+      }
+    }
+
+    function cleanupStream(reason) {
+      if (streamSocket) {
+        streamSocket.onopen = streamSocket.onmessage = streamSocket.onclose = streamSocket.onerror = null;
+        try { streamSocket.close(); } catch (e) { /* ignore */ }
+        streamSocket = null;
+      }
+      if (streamUrl) {
+        URL.revokeObjectURL(streamUrl);
+        streamUrl = null;
+      }
+      const viewEl = document.getElementById('streamView');
+      if (viewEl) {
+        viewEl.style.display = 'none';
+        viewEl.removeAttribute('src');
+      }
+      setStreamState(false, 'Idle');
+      if (reason) flashMessage(reason);
+    }
+
+    function startStream() {
+      if (streamSocket) return;
+      try {
+        const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/stream`;
+        streamSocket = new WebSocket(url);
+        streamSocket.binaryType = 'arraybuffer';
+        streamSocket.onopen = () => setStreamState(true, 'Live');
+        streamSocket.onmessage = evt => {
+          if (typeof evt.data === 'string') return;
+          const blob = evt.data instanceof Blob ? evt.data : new Blob([evt.data], { type: 'image/jpeg' });
+          const nextUrl = URL.createObjectURL(blob);
+          const viewEl = document.getElementById('streamView');
+          if (viewEl) {
+            viewEl.src = nextUrl;
+            viewEl.style.display = 'block';
+          }
+          if (streamUrl) URL.revokeObjectURL(streamUrl);
+          streamUrl = nextUrl;
+        };
+        streamSocket.onerror = () => cleanupStream('Stream connection error');
+        streamSocket.onclose = () => cleanupStream();
+      } catch (err) {
+        cleanupStream('Unable to start stream');
+      }
+    }
+
+    function toggleStream() {
+      if (streamSocket) {
+        cleanupStream();
+      } else {
+        startStream();
+      }
+    }
+
+    function connectSocket() {
+      try {
+        ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+        if (pingTimer) clearInterval(pingTimer);
+        ws.onopen = () => {
+          pingTimer = setInterval(() => {
+            try { ws.send('ping'); } catch (e) { /* ignore */ }
+          }, 15000);
+        };
+        ws.onmessage = evt => {
+          const data = JSON.parse(evt.data || '{}');
+          if (data.cameras) cameras = data.cameras;
+          if (data.status) {
+            status = data.status;
+            record = data.status.record || record || {};
+          }
+          if (data.view) view = data.view;
+          render();
+        };
+        ws.onclose = () => {
+          if (pingTimer) clearInterval(pingTimer);
+          setTimeout(connectSocket, 3000);
+        };
+      } catch (e) {
+        console.warn('WS unavailable, falling back to polling', e);
+        setInterval(fetchState, 2000);
+      }
+    }
+
+    async function toggleRecord() {
+      const nextEnabled = !(record && record.enabled);
+      const btn = document.getElementById('recordBtn');
+      if (btn) btn.disabled = true;
+      try {
+        const res = await fetch('/api/record', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: nextEnabled })
+        });
+        if (!res.ok) {
+          const detail = await res.json().catch(() => ({}));
+          throw new Error(detail.detail || 'Recording toggle failed');
+        }
+        record = await res.json();
+        status.record = record;
+        updateRecordUI();
+      } catch (err) {
+        flashMessage(err.message || err);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    fetchState();
+    connectSocket();
+    setStreamState(false, 'Idle');
+    const snapBtn = document.getElementById('snapshotBtn');
+    if (snapBtn) snapBtn.onclick = () => takeSnapshot();
+    const streamBtn = document.getElementById('streamBtn');
+    if (streamBtn) streamBtn.onclick = () => toggleStream();
+    const recordBtn = document.getElementById('recordBtn');
+    if (recordBtn) recordBtn.onclick = () => toggleRecord();
+    window.addEventListener('beforeunload', () => cleanupStream());
+    wireViewInputs();
+    updateRecordUI();
+  </script>
+</body>
+</html>

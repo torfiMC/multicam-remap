@@ -10,8 +10,6 @@ import glfw
 import cv2
 from OpenGL import GL
 
-from src.capture import CameraDevice
-from src.lens import LensView
 from src.scene_state import SceneState
 from src.render.mesh import SphereMesh, QuadMesh
 from src.render.grid import Grid
@@ -27,6 +25,9 @@ from src.constants import (
 )
 from src.input_handler import InputHandler
 from src.webserver import ControlServer
+from src.config_loader import load_camera_config, load_viewer_config
+from src.device_manager import DeviceManager
+from src.pipeline.ffmpeg_recorder import FFmpegRecorder
 
 class App:
     def __init__(self, config_path: str, fullscreen: bool = False):
@@ -40,7 +41,25 @@ class App:
         self.stream_quality = 80
         self.stream_max_width = 1280
         self._last_stream_time = 0.0
-        self._load_config()
+
+        # Config
+        self.cam_configs, self.config_data = load_camera_config(self.config_path)
+        viewer_opts = load_viewer_config(self.config_path)
+        self.viewer_config = viewer_opts["viewer"]
+        mesh_cfg = viewer_opts["mesh"]
+        self.softborder = viewer_opts["softborder"]
+        self.cache_lookup = viewer_opts["cache_lookup"]
+        self.maskblur = viewer_opts["maskblur"]
+        self.record_cfg = viewer_opts.get("record", {}) or {}
+        self.sphere_lat_steps = mesh_cfg.get("sphere_lat_steps", SPHERE_LAT_STEPS)
+        self.sphere_lon_steps = mesh_cfg.get("sphere_lon_steps", SPHERE_LON_STEPS)
+        self.sphere_radius = mesh_cfg.get("sphere_radius", SPHERE_RADIUS)
+        self.base_dir = os.path.dirname(os.path.abspath(self.config_path))
+        self.record_enabled = bool(self.record_cfg.get("enabled", False))
+        self.record_path = self.record_cfg.get("path", os.path.join(self.base_dir, "capture.mp4"))
+        self.record_fps = float(self.record_cfg.get("fps", 30.0))
+        self.recorder = None
+
         self._init_window()
         self._init_devices()
         self._init_gl()
@@ -58,72 +77,6 @@ class App:
         # Web control server (runs on its own thread)
         self.control_server = ControlServer(self)
         self.control_server.start()
-
-    def _load_config(self):
-        if not os.path.exists(self.config_path):
-             raise RuntimeError(f"Config file {self.config_path} not found.")
-
-        with open(self.config_path, 'r') as f:
-            self.config_data = yaml.safe_load(f)
-        
-        self.cam_configs = self.config_data.get('cameras', [])
-        if not self.cam_configs:
-             raise RuntimeError("No cameras defined in config file.")
-
-        # Optional viewer/virtual camera config (separate file)
-        self.viewer_config = {
-            'yaw': 0.0,
-            'pitch': 0.0,
-            'roll': 0.0,
-            'fov': 70.0,
-        }
-        self.softborder = False
-        self.cache_lookup = True
-        self.maskblur = 0
-        self.sphere_lat_steps = SPHERE_LAT_STEPS
-        self.sphere_lon_steps = SPHERE_LON_STEPS
-        self.sphere_radius = SPHERE_RADIUS
-        try:
-            base_dir = os.path.dirname(os.path.abspath(self.config_path))
-            viewer_path = os.path.join(base_dir, 'config.yaml')
-            if os.path.exists(viewer_path):
-                with open(viewer_path, 'r') as f:
-                    viewer_data = yaml.safe_load(f) or {}
-
-                cl = viewer_data.get('cache_lookup', True)
-                if isinstance(cl, str):
-                    self.cache_lookup = cl.strip().lower() in ('1', 'true', 'yes', 'on')
-                else:
-                    self.cache_lookup = bool(cl)
-
-                mb = viewer_data.get('maskblur', 0)
-                try:
-                    self.maskblur = max(0, int(mb))
-                except Exception:
-                    self.maskblur = 0
-
-                sb = viewer_data.get('softborder', False)
-                if isinstance(sb, str):
-                    self.softborder = sb.strip().lower() in ('1', 'true', 'yes', 'on')
-                else:
-                    self.softborder = bool(sb)
-                view = viewer_data.get('view', viewer_data) or {}
-                for k in ('yaw', 'pitch', 'roll', 'fov'):
-                    if k in view:
-                        self.viewer_config[k] = float(view[k])
-
-                mesh_cfg = viewer_data.get('mesh', viewer_data) or {}
-                try:
-                    if 'sphere_lat_steps' in mesh_cfg:
-                        self.sphere_lat_steps = max(8, int(mesh_cfg['sphere_lat_steps']))
-                    if 'sphere_lon_steps' in mesh_cfg:
-                        self.sphere_lon_steps = max(8, int(mesh_cfg['sphere_lon_steps']))
-                    if 'sphere_radius' in mesh_cfg:
-                        self.sphere_radius = float(mesh_cfg['sphere_radius'])
-                except Exception as e:
-                    print(f"[warn] mesh config ignored: {e}")
-        except Exception as e:
-            print(f"[warn] Failed to load viewer config.yaml: {e}")
 
     def _init_window(self):
         if not glfw.init():
@@ -147,66 +100,19 @@ class App:
         glfw.swap_interval(1)
 
     def _init_devices(self):
-        self.device_registry = {} # id_str -> CameraDevice
-        self.devices = [] # Unique list of devices to update
-        self.lenses = []
-        self.lens_configs = []  # aligns with self.lenses
-        self.lens_config_indices = []  # index into self.cam_configs for each lens
-        failed_dev_ids = set()
-        
-        for i, cc in enumerate(self.cam_configs):
-            dev_id = str(cc.get("id", "0"))
-            cam_name = cc.get('name', dev_id)
-
-            enabled_raw = cc.get('enabled', True)
-            enabled = enabled_raw
-            if isinstance(enabled_raw, str):
-                enabled = enabled_raw.strip().lower() not in ('0', 'false', 'no', 'off')
-            else:
-                enabled = bool(enabled_raw)
-
-            if not enabled:
-                print(f"[info] Camera '{cam_name}' ({dev_id}) disabled in config; skipping.")
-                continue
-
-            if dev_id in failed_dev_ids:
-                print(f"[warn] Skipping camera '{cam_name}' ({dev_id}) (previously failed to open)")
-                continue
-
-            # Retrieve or create device
-            if dev_id in self.device_registry:
-                dev = self.device_registry[dev_id]
-                print(f"Reusing existing device {dev_id} for '{cam_name}'")
-            else:
-                try:
-                    print(f"Initializing new device {dev_id} for '{cam_name}'")
-                    dev = CameraDevice(cc)
-                except Exception as e:
-                    print(f"[warn] Failed to open device for '{cam_name}' ({dev_id}): {type(e).__name__}: {e}")
-                    failed_dev_ids.add(dev_id)
-                    continue
-                self.device_registry[dev_id] = dev
-                self.devices.append(dev)
-
-            # Create lens mapping for this camera config
-            try:
-                lens = LensView(
-                    dev,
-                    cc,
-                    softborder=self.softborder,
-                    cache_lookup=self.cache_lookup,
-                    maskblur=self.maskblur,
-                )
-            except Exception as e:
-                print(f"[warn] Failed to initialize lens for '{cam_name}' ({dev_id}): {type(e).__name__}: {e}")
-                continue
-
-            self.lenses.append(lens)
-            self.lens_configs.append(cc)
-            self.lens_config_indices.append(i)
-
-        if not self.lenses:
-            print("[warn] No cameras could be initialized; running with an empty scene.")
+        self.device_manager = DeviceManager(
+            self.cam_configs,
+            softborder=self.softborder,
+            cache_lookup=self.cache_lookup,
+            maskblur=self.maskblur,
+        )
+        self.device_manager.initialize()
+        # Aliases for existing call sites
+        self.device_registry = self.device_manager.device_registry
+        self.devices = self.device_manager.devices
+        self.lenses = self.device_manager.lenses
+        self.lens_configs = self.device_manager.lens_configs
+        self.lens_config_indices = self.device_manager.lens_config_indices
 
     def _init_gl(self):
         PROJ_FOV = 180.0
@@ -265,158 +171,13 @@ class App:
                     fut.set_exception(e)
                 print(f"[warn] Scheduled task failed: {type(e).__name__}: {e}")
 
-    def _lens_idx_for_config(self, cfg_idx: int):
-        try:
-            return self.lens_config_indices.index(cfg_idx)
-        except ValueError:
-            return None
-
-    def _stop_device_if_unused(self, device):
-        if any(lens.camera is device for lens in self.lenses):
-            return
-        try:
-            device.stop()
-        except Exception as e:
-            print(f"[warn] Failed to stop device: {e}")
-        self.devices = [d for d in self.devices if d is not device]
-        for key, dev in list(self.device_registry.items()):
-            if dev is device:
-                self.device_registry.pop(key, None)
-
-    def _remove_lens(self, lens_idx: int):
-        lens = self.lenses.pop(lens_idx)
-        self.lens_config_indices.pop(lens_idx)
-        self.lens_configs.pop(lens_idx)
-        try:
-            lens.dispose()
-        except Exception as e:
-            print(f"[warn] Failed to dispose lens: {e}")
-        self._stop_device_if_unused(lens.camera)
-        self.sel_lens_idx = max(0, min(self.sel_lens_idx, len(self.lenses) - 1)) if self.lenses else 0
-
-    def _add_lens_from_config(self, cfg_idx: int, force_regen: bool = False):
-        cfg = self.cam_configs[cfg_idx]
-        dev_id = str(cfg.get("id", "0"))
-        cam_name = cfg.get('name', dev_id)
-
-        device = self.device_registry.get(dev_id)
-        if not device:
-            print(f"Initializing new device {dev_id} for '{cam_name}'")
-            device = CameraDevice(cfg)
-            self.device_registry[dev_id] = device
-            self.devices.append(device)
-        else:
-            print(f"Reusing device {dev_id} for '{cam_name}'")
-
-        lens = LensView(
-            device,
-            cfg,
-            softborder=self.softborder,
-            cache_lookup=self.cache_lookup,
-            maskblur=self.maskblur,
-            force_regen=force_regen,
-        )
-        print(f"[lens] Activated '{cam_name}' (cfg #{cfg_idx})")
-        self.lenses.append(lens)
-        self.lens_configs.append(cfg)
-        self.lens_config_indices.append(cfg_idx)
-        return lens
-
-    def _rebuild_lens(self, cfg_idx: int, force_regen: bool = False):
-        lens_idx = self._lens_idx_for_config(cfg_idx)
-        if lens_idx is None:
-            return self._add_lens_from_config(cfg_idx, force_regen=force_regen)
-
-        old_lens = self.lenses[lens_idx]
-        device = old_lens.camera
-        try:
-            old_lens.dispose()
-        except Exception as e:
-            print(f"[warn] Failed to dispose old lens: {e}")
-
-        lens = LensView(
-            device,
-            self.cam_configs[cfg_idx],
-            softborder=self.softborder,
-            cache_lookup=self.cache_lookup,
-            maskblur=self.maskblur,
-            force_regen=force_regen,
-        )
-        self.lenses[lens_idx] = lens
-        self.lens_configs[lens_idx] = self.cam_configs[cfg_idx]
-        return lens
-
     def apply_camera_update(self, cfg_idx: int, updates: dict, save: bool = True):
         with self.state_lock:
-            if cfg_idx < 0 or cfg_idx >= len(self.cam_configs):
-                raise IndexError(f"Camera index {cfg_idx} is out of range")
+            lens = self.device_manager.apply_camera_update(cfg_idx, updates, save=save)
+            if lens is None and bool(self.cam_configs[cfg_idx].get("enabled", True)):
+                raise RuntimeError(f"Camera '{self.cam_configs[cfg_idx].get('name', cfg_idx)}' could not be activated.")
 
-            cfg = self.cam_configs[cfg_idx]
-            lens_idx = self._lens_idx_for_config(cfg_idx)
-            lens = self.lenses[lens_idx] if lens_idx is not None else None
-
-            rebuild_lookup = bool(updates.get("rebuild_lookup", False))
-
-            if "enabled" in updates and updates["enabled"] is not None:
-                cfg["enabled"] = bool(updates["enabled"])
-
-            old_fov = float(cfg.get("fov", DEFAULT_FOV))
-            old_mask = float(cfg.get("mask_mindistance", 0.0))
-            old_distortion = str(cfg.get("distortion", "fisheye"))
-
-            changed_fov = False
-            changed_mask = False
-            changed_distortion = False
-
-            if "fov" in updates and updates["fov"] is not None:
-                new_fov = float(updates["fov"])
-                changed_fov = abs(new_fov - old_fov) > 1e-6
-                cfg["fov"] = new_fov
-
-            if "mask_mindistance" in updates and updates["mask_mindistance"] is not None:
-                new_mask = float(updates["mask_mindistance"])
-                changed_mask = abs(new_mask - old_mask) > 1e-6
-                cfg["mask_mindistance"] = new_mask
-
-            if "distortion" in updates and updates["distortion"]:
-                new_dist = str(updates["distortion"])
-                changed_distortion = (new_dist != old_distortion)
-                cfg["distortion"] = new_dist
-
-            numeric_pose_fields = ("yaw", "pitch", "roll", "orientation")
-            for key in numeric_pose_fields:
-                if key in updates and updates[key] is not None:
-                    cfg[key] = float(updates[key])
-
-            rebuild_lookup = rebuild_lookup or changed_fov or changed_mask or changed_distortion
-
-            enabled_now = bool(cfg.get("enabled", True))
-
-            if not enabled_now and lens_idx is not None:
-                self._remove_lens(lens_idx)
-                lens = None
-            elif enabled_now:
-                try:
-                    if lens_idx is None:
-                        lens = self._add_lens_from_config(cfg_idx, force_regen=rebuild_lookup or changed_fov)
-                        lens_idx = self._lens_idx_for_config(cfg_idx)
-                    elif rebuild_lookup or changed_fov:
-                        lens = self._rebuild_lens(cfg_idx, force_regen=rebuild_lookup or changed_fov)
-                except Exception as e:
-                    raise RuntimeError(f"Failed to refresh camera '{cfg.get('name', cfg_idx)}': {e}")
-
-                if lens is None:
-                    raise RuntimeError(f"Camera '{cfg.get('name', cfg_idx)}' could not be activated (no lens instance).")
-
-            if lens is not None:
-                lens.world_yaw = float(cfg.get("yaw", lens.world_yaw))
-                lens.world_pitch = float(cfg.get("pitch", lens.world_pitch))
-                lens.world_roll = float(cfg.get("roll", lens.world_roll))
-                lens.orientation = float(cfg.get("orientation", lens.orientation))
-                lens.fov = float(cfg.get("fov", lens.fov))
-                lens.mask_mindistance = float(cfg.get("mask_mindistance", getattr(lens, "mask_mindistance", 0.0)))
-                lens.distortion = cfg.get("distortion", getattr(lens, "distortion", "fisheye"))
-
+            self.sel_lens_idx = max(0, min(self.sel_lens_idx, len(self.lenses) - 1)) if self.lenses else 0
             self.state_version += 1
             if save:
                 self.save_config()
@@ -495,6 +256,37 @@ class App:
 
             return self.describe_view()
 
+    def describe_recording(self) -> dict:
+        with self.state_lock:
+            return {
+                "enabled": bool(getattr(self, "record_enabled", False)),
+                "path": getattr(self, "record_path", None),
+                "fps": float(getattr(self, "record_fps", 0.0)),
+                "active": bool(getattr(self, "recorder", None)),
+            }
+
+    def set_recording(self, enabled: bool):
+        with self.state_lock:
+            prev_enabled = bool(getattr(self, "record_enabled", False))
+            if enabled == prev_enabled:
+                return self.describe_recording()
+
+            self.record_enabled = bool(enabled)
+            if not enabled:
+                if getattr(self, "recorder", None):
+                    try:
+                        self.recorder.stop()
+                    except Exception:
+                        pass
+                    self.recorder = None
+            else:
+                # If the path was relative, keep it relative to config dir for predictable output.
+                if not os.path.isabs(self.record_path):
+                    self.record_path = os.path.join(self.base_dir, self.record_path)
+
+            self.state_version += 1
+            return self.describe_recording()
+
     def renderer_status(self):
         with self.state_lock:
             scene = getattr(self, 'scene', None)
@@ -505,6 +297,7 @@ class App:
                 "state_version": self.state_version,
                 "active_cameras": len(self.lenses),
                 "configured_cameras": len(self.cam_configs),
+                "record": self.describe_recording(),
             }
 
     def snapshot_cameras(self, max_width: int = 320):
@@ -580,8 +373,10 @@ class App:
         # Cleanup
         if self.control_server:
             self.control_server.stop()
-        for dev in self.devices:
-            dev.stop()
+        if getattr(self, "recorder", None):
+            self.recorder.stop()
+        if hasattr(self, "device_manager"):
+            self.device_manager.stop_all()
         glfw.terminate()
 
     def _update(self):
@@ -597,13 +392,18 @@ class App:
         glfw.swap_buffers(self.window)
 
     def _maybe_stream_frame(self, fb_w: int, fb_h: int) -> None:
-        if not self.control_server or not self.control_server.has_stream_clients():
+        should_stream = bool(self.control_server and self.control_server.has_stream_clients())
+        should_record = bool(self.record_enabled)
+        if not (should_stream or should_record):
             return
         if fb_w <= 0 or fb_h <= 0:
             return
 
         now = time.time()
-        min_interval = 1.0 / max(self.stream_fps, 0.1)
+        target_fps = self.stream_fps if should_stream else self.record_fps
+        if should_stream and should_record:
+            target_fps = max(self.stream_fps, self.record_fps)
+        min_interval = 1.0 / max(target_fps, 0.1)
         if (now - getattr(self, '_last_stream_time', 0.0)) < min_interval:
             return
 
@@ -613,18 +413,46 @@ class App:
             frame = np.flipud(frame)
             frame = frame[:, :, ::-1]
 
-            if self.stream_max_width and fb_w > self.stream_max_width:
+            if should_record:
+                self._maybe_record_frame(frame)
+                if not should_stream:
+                    self._last_stream_time = now
+
+            if should_stream and self.stream_max_width and fb_w > self.stream_max_width:
                 scale = self.stream_max_width / float(fb_w)
                 new_h = max(1, int(fb_h * scale))
                 frame = cv2.resize(frame, (self.stream_max_width, new_h), interpolation=cv2.INTER_AREA)
 
-            quality = int(max(1, min(100, getattr(self, 'stream_quality', 80))))
-            ok, buf = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
-            if ok:
-                self.control_server.broadcast_frame(buf.tobytes())
-                self._last_stream_time = now
+            if should_stream:
+                quality = int(max(1, min(100, getattr(self, 'stream_quality', 80))))
+                ok, buf = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+                if ok:
+                    self.control_server.broadcast_frame(buf.tobytes())
+                    self._last_stream_time = now
         except Exception as e:
             print(f"[warn] Stream capture failed: {type(e).__name__}: {e}")
+
+    def _ensure_recorder(self, width: int, height: int) -> None:
+        if self.recorder or not self.record_enabled:
+            return
+        try:
+            self.recorder = FFmpegRecorder(self.record_path, width, height, fps=self.record_fps)
+            print(f"[record] Writing to {self.record_path} @ {self.record_fps} fps")
+        except Exception as e:
+            print(f"[warn] Recorder disabled: {e}")
+            self.record_enabled = False
+
+    def _maybe_record_frame(self, frame_bgr) -> None:
+        if not self.record_enabled:
+            return
+        try:
+            h, w = frame_bgr.shape[:2]
+            self._ensure_recorder(w, h)
+            if self.recorder:
+                self.recorder.write_frame(frame_bgr.tobytes())
+        except Exception as e:
+            print(f"[warn] Recording failed: {e}")
+            self.record_enabled = False
 
     def save_config(self):
         print(f"[edit] Saving configuration to {self.config_path}...")

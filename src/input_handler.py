@@ -85,30 +85,13 @@ class InputHandler:
         elif key == glfw.KEY_Q: 
             scene.roll -= 2.0
         elif key == glfw.KEY_V:
-            target_mode = 'equirect' if scene.view_mode != 'equirect' else 'inside'
-            self.app.set_view_mode(target_mode)
-            print(f"[view] Mode: {self._mode_label()}")
+            self._toggle_mode('equirect')
         elif key == glfw.KEY_P:
-            if scene.view_mode == 'pano':
-                self.app.set_view_mode(scene.prev_view_mode or 'inside')
-            else:
-                scene.prev_view_mode = scene.view_mode
-                self.app.set_view_mode('pano')
-            print(f"[view] Mode: {self._mode_label()}")
+            self._toggle_mode('pano')
         elif key == glfw.KEY_S:
-            if scene.view_mode == 'orbit':
-                self.app.set_view_mode(scene.prev_view_mode or 'inside')
-            else:
-                scene.prev_view_mode = scene.view_mode
-                self.app.set_view_mode('orbit')
-            print(f"[view] Mode: {self._mode_label()}")
+            self._toggle_mode('orbit')
         elif key == glfw.KEY_F:
-            if scene.view_mode == 'all':
-                self.app.set_view_mode(scene.prev_view_mode or 'inside')
-            else:
-                scene.prev_view_mode = scene.view_mode
-                self.app.set_view_mode('all')
-            print(f"[view] Mode: {self._mode_label()}")
+            self._toggle_mode('all')
 
     def on_mouse(self, win, button, action, mods):
         if button == glfw.MOUSE_BUTTON_LEFT:
@@ -166,3 +149,12 @@ class InputHandler:
         if mode == 'all':
             return 'All Cameras'
         return 'Sphere (inside)'
+
+    def _toggle_mode(self, target_mode: str):
+        scene = self.app.scene
+        if scene.view_mode == target_mode:
+            self.app.set_view_mode(scene.prev_view_mode or 'inside')
+        else:
+            scene.prev_view_mode = scene.view_mode
+            self.app.set_view_mode(target_mode)
+        print(f"[view] Mode: {self._mode_label()}")
